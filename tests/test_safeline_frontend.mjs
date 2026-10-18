@@ -346,6 +346,23 @@ test('application and time selectors share one query and ignore late responses f
     assert.equal(state.page.down('#safeline-dashboard'), panel); assert.equal(panel.down('#safeline-overview-time'), time, 'form controls are not replaced when data refreshes');
 });
 
+test('overview refresh retains filters and geography while replacing pending statistics requests', () => {
+    const b = browser(), state = b.enter(), panel = startDashboard(b, state), app = panel.down('#safeline-overview-application'), time = panel.down('#safeline-overview-time');
+    app.value = '12'; app.fire('select', app); time.value = 'last7Day'; time.fire('select', time);
+    const data = dashboardData(2, { preset: 'last7Day', site_id: 12 }); replyDashboard(b, data);
+    state.geoRegion = 'china'; state.geoMode = 'intercept';
+    const inventoryCount = b.requests.filter((r) => r.options.url === base + '/inventory').length;
+    const refresh = panel.down('#safeline-overview-refresh'); refresh.handler(); const pending = b.requests.at(-1); refresh.handler();
+    assert.equal(pending.aborted, true);
+    const params = new URL('http://test.local' + b.requests.at(-1).options.url).searchParams;
+    assert.equal(params.get('preset'), 'last7Day'); assert.equal(params.get('site_id'), '12');
+    replyDashboard(b, data, 200, pending); assert.equal(state.overview, null);
+    replyDashboard(b, data);
+    assert.ok(panel.down('#safeline-overview-body').html.includes('中國 · 僅攔截'));
+    assert.equal(panel.down('#safeline-overview-application'), app); assert.equal(panel.down('#safeline-overview-time'), time);
+    assert.equal(b.requests.filter((r) => r.options.url === base + '/inventory').length, inventoryCount);
+});
+
 test('personal edition disables ignored application filters while retaining valid posture time ranges', () => {
     const b = browser(), state = b.enter(), panel = startDashboard(b, state, dashboardData(0));
     assert.equal(panel.down('#safeline-overview-application').disabled, true);
