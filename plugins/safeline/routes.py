@@ -11,6 +11,7 @@ from plugins.safeline.connection import Connection, SafeLineError
 from plugins.safeline.editing import EditCommand, ResourceEditor
 from plugins.safeline.application_pages import ApplicationEditor, SECTIONS
 from plugins.safeline.attacks import IPGroupEditor
+from plugins.safeline.security import SecurityEditor, history as cc_history
 from plugins.safeline.service import KINDS, now
 
 
@@ -74,6 +75,7 @@ def register_routes(context, store, service):
     editor = ResourceEditor(service)
     applications = ApplicationEditor(editor)
     ip_groups = IPGroupEditor(editor)
+    security = SecurityEditor(editor)
 
     async def authorize(request, *, write=False):
         user = await authenticator.authenticate(request)
@@ -379,3 +381,56 @@ def register_routes(context, store, service):
     @application.post(base + "/ip-groups")
     async def create_ip_group(request: Request):
         return await save_ip_group(request, "create")
+
+    def cc_filters(request, *, paged=False, ip=True):
+        values = query(request, {"site", "start", "end"} | ({"ip"} if ip else set()) | ({"page", "page_size"} if paged else set()))
+        result = {}
+        if paged:
+            result.update(page=integer(values.pop("page", "1"), 1, 1_000_000), page_size=integer(values.pop("page_size", "20"), 1, 100))
+        for key, value in values.items():
+            if key in {"start", "end"}: result[key] = integer(value, 0, 9_007_199_254_740_991)
+            elif not value or len(value) > 1024 or any(ord(c) < 32 or ord(c) == 127 for c in value): raise HTTPException(422, "invalid_safeline_query")
+            else: result[key] = value
+        if "start" in result and "end" in result and result["start"] > result["end"]: raise HTTPException(422, "invalid_safeline_query")
+        return result
+
+    @application.get(base + "/cc/history/{kind}")
+    async def cc_records(request: Request, kind: str):
+        user = await authorize(request)
+        if kind not in {"rate", "waiting"}: raise HTTPException(422, "invalid_safeline_resource")
+        params = cc_filters(request, paged=True, ip=kind == "rate")
+        try: return {"user": user, **await cc_history(service, kind, params)}
+        except SafeLineError as error: raise HTTPException(error.status, error.code) from None
+
+    def management_scope(request, area, section):
+        if area == "cc":
+            if section not in {"configuration", "relieve"}: raise HTTPException(422, "invalid_safeline_resource")
+            return cc_filters(request) if section == "relieve" else query(request, set())
+        if section not in {"create", "edit", "order", "subscribe"}: raise HTTPException(422, "invalid_safeline_resource")
+        values = query(request, {"id"} if section == "edit" else {"action"} if section == "order" else set())
+        if section == "edit": return {"id": integer(values.get("id", ""), 1, 9_007_199_254_740_991)}
+        if section == "order": return {"action": integer(values.get("action", ""), 0, 1)}
+        return {}
+
+    async def get_management(request, area, section):
+        user = await authorize(request); params = management_scope(request, area, section)
+        try: return {"user": user, **await security.load(area, section, params)}
+        except SafeLineError as error: raise HTTPException(error.status, error.code) from None
+
+    async def save_management(request, area, section):
+        user = await authorize(request, write=True); params = management_scope(request, area, section)
+        value = await command(request, EditCommand)
+        try: return {"user": user, **await security.save(area, section, params, value, user)}
+        except SafeLineError as error: raise HTTPException(error.status, error.code) from None
+
+    @application.get(base + "/policy-management/{section}")
+    async def get_policy_management(request: Request, section: str): return await get_management(request, "policies", section)
+
+    @application.post(base + "/policy-management/{section}")
+    async def save_policy_management(request: Request, section: str): return await save_management(request, "policies", section)
+
+    @application.get(base + "/cc/{section}")
+    async def get_cc_management(request: Request, section: str): return await get_management(request, "cc", section)
+
+    @application.post(base + "/cc/{section}")
+    async def save_cc_management(request: Request, section: str): return await save_management(request, "cc", section)

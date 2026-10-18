@@ -35,6 +35,7 @@
         invalid_safeline_source_ip: '請檢查源 IP 方式、XFF 位置（1–100）及代理 IP／CIDR',
         invalid_safeline_headers: '請檢查 Header 目標、動作、名稱和值；敏感標頭改名或改目標時需填入新值',
         safeline_feature_unavailable: '此功能需 SafeLine 專業版或商業版授權',
+        invalid_safeline_security: '請檢查規則名稱、匹配目標與方式、匹配內容及排序選項',
         safeline_business_required: '此功能需 SafeLine 商業版授權', safeline_portal_disabled: '統一認證入口尚未啟用',
         safeline_forwarding_limit: '已達目前版本的轉發規則上限', invalid_safeline_application: '設定格式無效，請檢查必填欄位、數值及選項',
         safeline_statistics_scope_unavailable: '目前版本不支援此區塊的應用篩選',
@@ -109,6 +110,16 @@
         return entry;
     }
     function type(kind) { return types.find(function (t) { return t.id === kind; }) || { name: '防護規則', icon: 'fa-shield' }; }
+    function listRows(inventory, action) {
+        if (!inventory) return [];
+        return (inventory.resources[action === 0 ? 'allow' : 'deny'] || []).concat((inventory.policies || []).filter(function (r) {
+            return r.action === 999 && r[action === 0 ? 'white_rule' : 'black_rule'] > 0;
+        }));
+    }
+    function treeResource(state, kind, id) {
+        const store = state.tree.getStore();
+        return store.getNodeById(resourceKey(kind, id)) || (kind === 'policies' && (store.getNodeById('list:allow:' + id) || store.getNodeById('list:deny:' + id)));
+    }
     function icon(resource) {
         const code = resource.stale ? 'unknown' : resource.status && resource.status.code;
         return 'fa ' + type(resource.kind).icon + (['running', 'paused', 'stopped', 'online', 'pending', 'error', 'unknown'].includes(code) ? ' ' + code : '');
@@ -122,10 +133,11 @@
     function syncNodes(parent, desired) {
         const wanted = new Set(desired.map(function (v) { return v.id; }));
         parent.childNodes.slice().forEach(function (node) { if (!wanted.has(node.getId())) node.remove(true); });
-        desired.forEach(function (data) {
+        desired.forEach(function (data, index) {
             let node = parent.findChild('id', data.id);
             const children = data.children; const props = Object.assign({}, data); delete props.children;
             if (node) node.set(props); else node = parent.appendChild(Object.assign({}, props, { expanded: !props.leaf, loaded: true, children: props.leaf ? undefined : [] }));
+            if (parent.childNodes[index] !== node && typeof parent.insertChild === 'function') parent.insertChild(index, node);
             if (children) syncNodes(node, children);
         });
     }
@@ -133,19 +145,21 @@
         if (!state.active || !alive(state.tree)) return;
         const inventory = state.inventory;
         const root = state.tree.getRootNode();
-        const nodes = types.map(function (t) {
-            const values = inventory && inventory.resources[t.id] || [];
-            const error = inventory && inventory.errors[t.id];
-            const names = new Map(); values.forEach(function (r) { names.set(r.name, (names.get(r.name) || 0) + 1); });
-            return { id: 'type:' + t.id, kind: t.id, text: t.name + (error ? ' (?)' : inventory ? ' (' + values.length + (inventory.truncated[t.id] ? '+' : '') + ')' : ''),
+        const visibleTypes = [types[0], { id: 'lists', name: '黑白名單', icon: 'fa-list-alt' }, types[3], types[4]];
+        const nodes = visibleTypes.map(function (t) {
+            const values = t.id === 'lists' ? listRows(inventory, 0).map(function (r) { return Object.assign({}, r, { listAction: 0 }); }).concat(listRows(inventory, 1).map(function (r) { return Object.assign({}, r, { listAction: 1 }); })) : inventory && inventory.resources[t.id] || [];
+            const error = inventory && (t.id === 'lists' ? inventory.errors.deny || inventory.errors.allow : inventory.errors[t.id]);
+            const label = function (r) { return (t.id === 'lists' ? r.listAction === 0 ? '放行：' : '攔截：' : '') + r.name; };
+            const names = new Map(); values.forEach(function (r) { names.set(label(r), (names.get(label(r)) || 0) + 1); });
+            const truncated = inventory && (t.id === 'lists' ? inventory.truncated.deny || inventory.truncated.allow : inventory.truncated[t.id]);
+            return { id: 'type:' + t.id, kind: t.id, text: t.name + (error ? ' (?)' : inventory ? ' (' + values.length + (truncated ? '+' : '') + ')' : ''),
                 iconCls: 'fa ' + t.icon, leaf: false, children: values.map(function (r) {
-                    return { id: resourceKey(r.kind, r.id), kind: r.kind, resourceId: r.id, text: r.name + (names.get(r.name) > 1 ? ' · #' + r.id : ''), iconCls: icon(r),
+                    return { id: r.kind === 'policies' ? 'list:' + (r.listAction === 0 ? 'allow:' : 'deny:') + r.id : resourceKey(r.kind, r.id), kind: r.kind, resourceId: r.id, text: label(r) + (names.get(label(r)) > 1 ? ' · #' + r.id : ''), iconCls: icon(r),
                         qtip: r.stale ? '資料已過期；最後成功更新：' + date(r.observed_at || state.lastInventory) : r.status.label, leaf: true };
                 }) };
         });
         syncNodes(root, nodes);
-        const selected = state.selection.kind === 'root' ? root : state.tree.getStore().getNodeById(
-            state.selection.id ? resourceKey(state.selection.kind, state.selection.id) : 'type:' + state.selection.kind);
+        const selected = state.selection.kind === 'root' ? root : state.selection.id ? treeResource(state, state.selection.kind, state.selection.id) : state.tree.getStore().getNodeById('type:' + state.selection.kind);
         if (selected) state.tree.getSelectionModel().select(selected, false, true);
     }
     function show(state, config) {
@@ -172,9 +186,10 @@
             listeners: { itemdblclick: function (view, record) { if (action) action(record.data); } } };
     }
     function choose(state, kind, id, tab) {
+        if (!id && ['deny', 'allow'].includes(kind)) { tab = kind; kind = 'lists'; }
         state.selection = id ? { kind: kind, id: String(id) } : { kind: kind };
         state.tab = tab || null; state.logPage = 1; state.logFilters = {}; renderTree(state);
-        const node = id && state.tree.getStore().getNodeById(resourceKey(kind, String(id)));
+        const node = id && treeResource(state, kind, String(id));
         if (node && node.parentNode && typeof node.parentNode.expand === 'function') node.parentNode.expand();
         renderSelection(state);
     }
@@ -891,11 +906,27 @@
             user: function () { return user(state); }, current: function (generation, who) { return current(state, generation, who); },
             request: function (path, options, done, fail, page) { return request(state, path, options, done, fail, page); },
             show: function (config) { show(state, config); }, note: function (value) { note(state, value); },
-            loadInventory: function () { loadInventory(state); } });
+            loadInventory: function () { loadInventory(state); },
+            configureCC: function () { securityPages(state).configureCC(); },
+            detectionDrill: function () { state.tab = 'logs'; renderSelection(state); },
+            relieve: function (ids, filters, refresh) { securityPages(state).relieve(ids, filters, refresh); } });
         state.attackPages.render(context);
     }
+    function securityPages(state) {
+        if (!state.securityPages) state.securityPages = window.__pveSafeLineSecurityPages({ state: state, enc: enc, alive: alive, combo: combo, grid: grid,
+            date: date, amount: amount, switchMark: switchMark, uuid: uuid, message: message,
+            user: function () { return user(state); }, current: function (generation, who) { return current(state, generation, who); },
+            request: function (path, options, done, fail, page) { return request(state, path, options, done, fail, page); },
+            show: function (config) { show(state, config); }, note: function (text) { note(state, text); },
+            choose: function (r) { choose(state, r.kind, r.id); }, loadInventory: function () { loadInventory(state); },
+            showList: function (action) { choose(state, 'lists', null, action === 0 ? 'allow' : 'deny'); },
+            edited: function (id, action) { if (state.selection.id === String(id)) { state.selection = { kind: action === 0 ? 'allow' : 'deny', id: String(id) }; state.tab = 'summary'; } loadInventory(state); }
+        });
+        return state.securityPages;
+    }
     function navItems(selection) {
-        if (selection.kind === 'root') return [['overview', '總覽', 'fa-dashboard'], ['events', '攻擊防護', 'fa-shield'], ['policies', '防護規則', 'fa-filter'], ['challenge', '人機驗證', 'fa-user-circle-o'], ['connection', '連線資訊', 'fa-plug']];
+        if (selection.kind === 'root') return [['overview', '總覽', 'fa-dashboard'], ['events', '攻擊防護', 'fa-shield'], ['policies', '防護規則', 'fa-filter'], ['cc', 'CC 防護', 'fa-line-chart'], ['cc-rate', '頻率限制', 'fa-angle-right'], ['cc-waiting', '等候室', 'fa-angle-right'], ['challenge', '人機驗證', 'fa-user-circle-o'], ['connection', '連線資訊', 'fa-plug']];
+        if (selection.kind === 'lists') return [['deny', '黑名單', 'fa-ban'], ['allow', '白名單', 'fa-check-circle-o'], ['events', '檢測事件', 'fa-shield'], ['logs', '檢測日誌', 'fa-search']];
         if (!selection.id) return [['list', type(selection.kind).name, type(selection.kind).icon]].concat(selection.kind==='applications'?[['advanced','高級配置','fa-cogs']]:[]);
         if (selection.kind === 'applications') return [['basic', '基本資訊', 'fa-list-alt'], ['forwarding', '轉發規則', 'fa-exchange'], ['advanced', '高級配置', 'fa-cogs'], ['routes', '應用路由', 'fa-sitemap'], ['tamper', '網頁防篡改', 'fa-shield']];
         if (selection.kind === 'certificates') return [['summary', '概要', 'fa-list-alt'], ['info', '憑證資訊', 'fa-certificate'], ['applications', '引用應用', 'fa-globe']];
@@ -906,15 +937,16 @@
         if (!state.active || !alive(state.page)) return;
         cancel(state, false);
         const selected = state.selection, items = navItems(selected);
+        if (selected.kind === 'root' && state.tab === 'cc') state.tab = 'cc-rate';
         if (!items.some(function (item) { return item[0] === state.tab; })) state.tab = items[0][0];
         const nav = state.page.down('#safeline-nav'), title = state.page.down('#safeline-heading');
         const previousItems = []; nav.getStore().each(function (row) { previousItems.push([row.get('id'), row.get('name'), row.get('icon')]); });
         if (JSON.stringify(previousItems) !== JSON.stringify(items)) nav.getStore().loadData(items.map(function (item) { return { id: item[0], name: item[1], icon: item[2] }; }));
         nav.getSelectionModel().select(nav.getStore().getById(state.tab), false, true);
         const resource = selected.id && findResource(state);
-        title.setText(enc('SafeLine WAF' + (selected.kind !== 'root' ? ' / ' + type(selected.kind).name : '') + (resource ? ' / ' + resource.name : '')));
+        title.setText(enc('SafeLine WAF' + (selected.kind !== 'root' ? ' / ' + (selected.kind === 'lists' ? '黑白名單' : type(selected.kind).name) : '') + (resource ? ' / ' + resource.name : '')));
         const edit = state.page.down('#safeline-resource-edit'), mode = state.page.down('#safeline-resource-mode'), toggle = state.page.down('#safeline-resource-switch');
-        if (edit) { edit.setVisible(!!resource && (selected.kind !== 'applications' || state.tab === 'basic')); edit.setDisabled(!resource || !!resource.stale || resource.builtin && ['deny', 'allow', 'policies'].includes(selected.kind) || selected.kind === 'policies'); }
+        if (edit) { edit.setVisible(!!resource && (selected.kind !== 'applications' || state.tab === 'basic')); edit.setDisabled(!resource || !!resource.stale || (resource.builtin || resource.cloud_id > 0) && ['deny', 'allow', 'policies'].includes(selected.kind) || selected.kind === 'policies'); }
         if (mode) { mode.setVisible(!!resource && selected.kind === 'applications'); mode.setDisabled(!resource || !!resource.stale); }
         if (toggle) { toggle.setVisible(!!resource && ['deny', 'allow', 'policies'].includes(selected.kind)); toggle.setDisabled(!resource || !!resource.stale); }
         if (!state.connection) { note(state, '正在讀取連線設定…'); return; }
@@ -924,10 +956,16 @@
             if (state.tab === 'overview') { loadOverview(state); return; }
             if (state.tab === 'events') { renderLogs(state, null); return; }
             if (state.tab === 'challenge') { renderLogs(state, { kind: 'challenge' }); return; }
+            if (state.tab === 'cc-rate' || state.tab === 'cc-waiting') { renderLogs(state, { kind: state.tab === 'cc-rate' ? 'rate' : 'waiting' }); return; }
             if (state.tab === 'policies') {
                 if (state.inventory && (state.inventory.errors.deny || state.inventory.errors.allow)) note(state, message(state.inventory.errors.deny || state.inventory.errors.allow));
                 else resourceList(state, 'policies'); return;
             }
+        }
+        if (selected.kind === 'lists') {
+            if (state.tab === 'events' || state.tab === 'logs') renderLogs(state, { kind: 'policy-list', mode: state.tab === 'events' ? 'events' : 'records' });
+            else securityPages(state).list(state.tab === 'allow' ? 0 : 1);
+            return;
         }
         if (!state.inventory) { note(state, '正在讀取資源…'); return; }
         if (!selected.id) { if(selected.kind==='applications'&&state.tab==='advanced')renderAdvanced(state);else resourceList(state, selected.kind); return; }
@@ -947,7 +985,7 @@
                 } }],
             items: [{ xtype: 'grid', itemId: 'safeline-nav', region: 'west', width: 165, minWidth: 140, maxWidth: 260, split: true, border: false, hideHeaders: true,
                 store: { fields: ['id', 'name', 'icon'], data: [] },
-                columns: [{ flex: 1, dataIndex: 'name', renderer: function (value, meta, record) { return '<i class="fa ' + enc(record.data.icon) + '" aria-hidden="true" style="width:23px"></i>' + enc(value); } }],
+                columns: [{ flex: 1, dataIndex: 'name', renderer: function (value, meta, record) { return '<span' + (['cc-rate', 'cc-waiting'].includes(record.data.id) ? ' style="padding-left:14px"' : '') + '><i class="fa ' + enc(record.data.icon) + '" aria-hidden="true" style="width:23px"></i>' + enc(value) + '</span>'; } }],
                 listeners: { selectionchange: function (model, records) {
                     const record = records && records[0];
                     if (record && state.tab !== record.get('id')) { state.tab = record.get('id'); state.logPage = 1; state.logFilters = {}; renderSelection(state); }
@@ -983,7 +1021,7 @@
             renderTree(state);
             status(state, (Object.keys(data.errors).length ? '部分資源無法更新 · ' : '已更新 · ') + date(data.updated_at));
             if (state.selection.kind === 'root' && state.tab === 'overview') renderOverview(state);
-            else if (!alive(state.editor) && !(state.selection.kind === 'root' && ['connection', 'events', 'challenge'].includes(state.tab)) && !(state.selection.kind==='applications'&&state.tab==='advanced')) renderSelection(state);
+            else if (!alive(state.editor) && state.selection.kind !== 'lists' && !(state.selection.kind === 'root' && ['connection', 'events', 'challenge', 'cc-rate', 'cc-waiting'].includes(state.tab)) && !(state.selection.kind==='applications'&&state.tab==='advanced')) renderSelection(state);
         }, function (code) {
             status(state, message(code));
             if (state.inventory) types.forEach(function (t) { state.inventory.errors[t.id] = code; state.inventory.resources[t.id].forEach(function (row) { row.stale = true; }); });

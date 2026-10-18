@@ -97,7 +97,7 @@
         function detail(row, source) {
             if (!ctx.user()) return;
             closeEditor(); let dialog;
-            dialog = Ext.create('Ext.window.Window', { title: '攻擊日誌詳情', width: 1000, height: Math.min(760, (window.innerHeight || 840) - 60), modal: true, constrain: true, closeAction: 'destroy', layout: 'fit',
+            dialog = Ext.create('Ext.window.Window', { title: (source === 'rule' ? '檢測' : '攻擊') + '日誌詳情', width: 1000, height: Math.min(760, (window.innerHeight || 840) - 60), modal: true, constrain: true, closeAction: 'destroy', layout: 'fit',
                 items: [{ xtype: 'panel', itemId: 'safeline-attack-detail', border: false, layout: { type: 'vbox', align: 'stretch' }, bodyPadding: 12 }],
                 buttons: [{ text: '關閉', handler: function () { dialog.close(); } }], listeners: { destroy: function () { if (state.editor === dialog) state.editor = null; } } });
             state.editor = dialog; dialog.show();
@@ -111,8 +111,8 @@
                 const summary = ctx.properties([['攻擊類型', attack(value.attack_type)], ['攻擊地址', value.website || (value.host || '') + (value.url_path || '') || '—'],
                     ['處置動作', action(value.action)], ['攻擊者', (value.src_ip || '—') + '（' + geo(value) + '）'], ['JA4 指紋', value.ja4_fingerprint || '—'],
                     ['攻擊載荷', [value.location, value.decode_path, value.payload].filter(Boolean).join(' → ') || '—'], ['命中防護模組', moduleName(value.module)],
-                    ['攻擊時間', ctx.date(value.timestamp)], ['ID', value.event_id]], '攻擊資訊');
-                summary.height = 330;
+                    ['攻擊時間', ctx.date(value.timestamp)], ['ID', value.event_id]].concat(source === 'rule' ? [['規則名稱', value.policy_name || '—'], ['規則 ID', value.policy_rule_id == null ? '—' : value.policy_rule_id]] : []), source === 'rule' ? '檢測資訊' : '攻擊資訊');
+                summary.height = source === 'rule' ? 400 : 330;
                 summary.columns[1].renderer = enc;
                 summary.tbar = [{ text: '加入 IP 組', disabled: !value.src_ip, handler: function () { addIp(value.src_ip); } },
                     { text: '查看 IP 畫像', iconCls: 'fa fa-external-link', disabled: !value.src_ip, handler: function () { portrait(value.src_ip, false); } },
@@ -137,12 +137,13 @@
             if (!row.ip || !row.host || !row.dst_port || !Number.isFinite(row.start_at) || !Number.isFinite(row.end_at) || row.end_at < row.start_at) { ctx.note('事件缺少完整的來源與時間，無法精確查詢相關日誌。'); return; }
             const filters = { ip: row.ip, host: row.host, port: row.dst_port == null ? '' : String(row.dst_port), start: row.start_at, end: row.end_at, action: denied ? '1' : '0' };
             state.logMode = 'records'; state.logPage = 1; state.logFilters = filters; state.logHours = 0; state.logRelated = true;
+            if (context && context.kind === 'policy-list') { ctx.detectionDrill(); return; }
             render(context);
         }
         function cell(table, index, record, events, context, source) {
             // Resolve the visible column, including after the user reorders or hides columns.
             const column = table.getVisibleColumnManager().getHeaderAtIndex(index), key = column && column.dataIndex, row = record.data;
-            if (context && context.kind === 'challenge') { if (key === 'ip') addIp(row.ip); return; }
+            if (context && ['challenge', 'rate', 'waiting'].includes(context.kind)) { if (key === 'ip') addIp(row.ip); return; }
             if (key === 'ip' || key === 'src_ip') addIp(events ? row.ip : row.src_ip);
             else if (key === 'ip_portrait') portrait(events ? row.ip : row.src_ip, false);
             else if (events && (key === 'pass_count' || key === 'deny_count')) drill(row, key === 'deny_count', context);
@@ -187,12 +188,11 @@
                 notice(locked ? ctx.message(data.capabilities.premium ? 'safeline_edit_unsupported' : 'safeline_feature_unavailable') : '已讀取 · ' + ctx.date(data.updated_at));
             }, function (code) { notice(ctx.message(code)); }, false);
         }
-        function filterForm(events, filters, apply, human) {
-            const fields = human ? [
+        function filterForm(events, filters, apply, simple, rulePage, waiting) {
+            const fields = simple ? (waiting ? [] : [
                 { xtype: 'textfield', name: 'ip', fieldLabel: '來源 IP', value: filters.ip || '' },
-                { xtype: 'textfield', name: 'site', fieldLabel: '應用', value: filters.site || '', emptyText: '應用名稱或備註（模糊搜尋）' }
-            ] : [
-                { xtype: 'textfield', name: 'ip', fieldLabel: '攻擊 IP', value: filters.ip || '' },
+            ]).concat([{ xtype: 'textfield', name: 'site', fieldLabel: '應用', value: filters.site || '', emptyText: '應用名稱或備註（模糊搜尋）' }]) : [
+                { xtype: 'textfield', name: 'ip', fieldLabel: rulePage ? '來源 IP' : '攻擊 IP', value: filters.ip || '' },
                 { xtype: 'textfield', name: 'host', fieldLabel: '域名', value: filters.host || '' },
                 { xtype: 'numberfield', name: 'port', fieldLabel: '端口', value: filters.port || '', minValue: 1, maxValue: 65535, allowDecimals: false },
                 Object.assign(combo('hours', '時間範圍', state.logHours || 0, [[0, '全部時間'], [24, '近 24 小時'], [168, '近 7 天'], [720, '近 30 天']]), { name: 'hours' }),
@@ -200,42 +200,61 @@
             fields.push(
                 { xtype: 'datefield', name: 'start', fieldLabel: '開始時間', value: filters.start != null ? new Date(filters.start) : null, format: 'Y-m-d H:i:s', altFormats: 'Y-m-d H:i|Y-m-d|c', emptyText: '年-月-日 時:分:秒' },
                 { xtype: 'datefield', name: 'end', fieldLabel: '結束時間', value: filters.end != null ? new Date(filters.end) : null, format: 'Y-m-d H:i:s', altFormats: 'Y-m-d H:i|Y-m-d|c', emptyText: '年-月-日 時:分:秒' });
-            if (!events && !human) fields.push(combo('action', '動作', filters.action || '', [['', '全部'], ['0', '放行'], ['1', '攔截']]),
+            if (rulePage && !events) fields.unshift({ xtype: 'numberfield', name: 'policy_rule_id', fieldLabel: '規則 ID', value: filters.policy_rule_id == null ? '' : filters.policy_rule_id, minValue: 1, allowDecimals: false });
+            if (!events && !simple) fields.push(combo('action', '動作', filters.action || '', [['', '全部'], ['0', '放行'], ['1', '攔截']]),
                 Object.assign(combo('attack_type', '攻擊類型', filters.attack_type ? String(filters.attack_type).split(',') : [],
-                    [['-4', '超長資料'], ['-3', '黑名單'], ['-2', '白名單'], ['-1', '非攻擊']].concat(attackNames.map(function (name, id) { return [String(id), name]; }), Object.keys(extraAttacks).map(function (id) { return [id, extraAttacks[id]]; }))), { multiSelect: true }),
+                    rulePage ? [['-3', '黑名單'], ['-2', '白名單']] : [['-4', '超長資料'], ['-3', '黑名單'], ['-2', '白名單'], ['-1', '非攻擊']].concat(attackNames.map(function (name, id) { return [String(id), name]; }), Object.keys(extraAttacks).map(function (id) { return [id, extraAttacks[id]]; }))), { multiSelect: true, fieldLabel: rulePage ? '類型' : '攻擊類型' }),
                 { xtype: 'textfield', name: 'url', fieldLabel: '路徑', value: filters.url || '' },
                 { xtype: 'textfield', name: 'event_id', fieldLabel: 'ID', value: filters.event_id || '' },
                 { xtype: 'textfield', name: 'ja4_fingerprint', fieldLabel: 'JA4 指紋', value: filters.ja4_fingerprint || '' });
             fields.push(Object.assign(combo('auto_refresh', '自動刷新', state.logAutoRefresh || 0, [[0, '關閉'], [5, '每 5 秒'], [10, '每 10 秒'], [30, '每 30 秒'], [60, '每 60 秒']]), {
                 listeners: { select: function (field) { state.logAutoRefresh = Number(field.getValue()) || 0; apply(); } } }));
-            fields.forEach(function (field) { Object.assign(field, { columnWidth: human ? 0.2 : 0.25, padding: '0 10 6 0', labelAlign: 'top', maxLength: 1024 });
+            fields.forEach(function (field) { Object.assign(field, { columnWidth: simple ? waiting ? 0.25 : 0.2 : 0.25, padding: '0 10 6 0', labelAlign: 'top', maxLength: 1024 });
                 field.listeners = Object.assign({ specialkey: function (f, event) { if (event.getKey() === event.ENTER) apply(); } }, field.listeners || {}); });
             return { xtype: 'form', itemId: 'safeline-attack-filters', border: false, bodyPadding: '5 10 0', layout: 'column', items: fields };
         }
         function render(context) {
             stop();
-            const serial = state.logSerial, human = context && context.kind === 'challenge', policy = context && ['deny', 'allow', 'policies'].includes(context.kind), application = context && context.kind === 'applications';
-            const events = !context && state.logMode === 'events', source = policy ? 'rule' : state.logSource;
+            const serial = state.logSerial, human = context && context.kind === 'challenge', cc = context && ['rate', 'waiting'].includes(context.kind), waiting = cc && context.kind === 'waiting', simple = human || cc,
+                rulePage = context && context.kind === 'policy-list', policy = context && ['deny', 'allow', 'policies'].includes(context.kind), application = context && context.kind === 'applications';
+            const events = rulePage ? context.mode === 'events' : !context && state.logMode === 'events', source = policy || rulePage ? 'rule' : state.logSource;
             if (application && (!context.domains.length || context.domains.some(function (d) { return d.includes('*'); }))) { ctx.note('此應用的域名無法精確限定日誌，請在攻擊防護頁按實際 Host、端口及來源 IP 查詢。'); return; }
             if (application && !state.logFilters.host) {
                 const listener = (context.listeners || [])[0], match = String((context.ports || [])[0] || '').match(/^([1-9][0-9]{0,4})(?:_ssl)?$/), port = listener ? listener.port : match && Number(match[1]);
                 if (!port || port > 65535) { ctx.note('無法核對此應用的監聽端口，請在攻擊防護頁依實際 Host／端口查詢。'); return; }
                 state.logFilters.host = context.domains[0]; state.logFilters.port = String(port);
             }
-            const mode = human ? 'challenge' : events ? 'events' : 'records', fitted = state.logFittedSizes || (state.logFittedSizes = {});
+            const mode = simple ? context.kind : (rulePage ? 'policy-' : '') + (events ? 'events' : 'records'), fitted = state.logFittedSizes || (state.logFittedSizes = {});
             const filters = state.logFilters || {}, size = state.logPageSize || fitted[mode] || 20, params = { page: state.logPage, page_size: size };
-            if (!human) params.source = source;
+            if (!simple) params.source = source;
             Object.keys(filters).forEach(function (key) { if (filters[key] != null && filters[key] !== '') params[key] = filters[key]; });
             if (policy) params.policy_rule_id = context.id;
-            if (!human && state.logHours && params.start == null && params.end == null) { params.end = Date.now(); params.start = params.end - state.logHours * 3600000; }
-            ctx.note('正在讀取' + (human ? '人機驗證記錄' : events ? '攻擊事件' : '攻擊日誌') + '…');
-            ctx.request('/' + (human ? 'challenges' : events ? 'events' : 'records') + '?' + new URLSearchParams(params).toString(), {}, function (data) {
+            if (!simple && state.logHours && params.start == null && params.end == null) { params.end = Date.now(); params.start = params.end - state.logHours * 3600000; }
+            const pageTitle = human ? '人機驗證記錄' : cc ? waiting ? 'CC 防護 · 等候室' : 'CC 防護 · 頻率限制' : (rulePage ? '檢測' : '攻擊') + (events ? '事件' : '日誌');
+            ctx.note('正在讀取' + pageTitle + '…');
+            ctx.request('/' + (human ? 'challenges' : cc ? 'cc/history/' + context.kind : events ? 'events' : 'records') + '?' + new URLSearchParams(params).toString(), {}, function (data) {
                 if (serial !== state.logSerial) return;
                 if (data.connection_revision !== state.connection.revision || !Array.isArray(data.items) || !Number.isSafeInteger(data.total) || data.total < 0) { ctx.note('日誌資料已變更或格式不符，請刷新。'); return; }
-                const ip = { text: '來源 IP', dataIndex: events || human ? 'ip' : 'src_ip', width: 300, renderer: cellText }, icon = { text: 'IP 畫像', dataIndex: 'ip_portrait', width: 78, minWidth: 65, align: 'center', renderer: function (v, meta, r) { return (events ? r.data.ip : r.data.src_ip) ? '<span class="fa fa-external-link" role="img" aria-label="雙擊查看 IP 畫像"></span>' : '—'; } },
+                const ip = { text: '來源 IP', dataIndex: events || simple ? 'ip' : 'src_ip', width: 300, renderer: cellText }, icon = { text: 'IP 畫像', dataIndex: 'ip_portrait', width: 78, minWidth: 65, align: 'center', renderer: function (v, meta, r) { return (events ? r.data.ip : r.data.src_ip) ? '<span class="fa fa-external-link" role="img" aria-label="雙擊查看 IP 畫像"></span>' : '—'; } },
                     location = { text: '來源 IP 屬地', dataIndex: 'geography', width: 250, renderer: function (v, m, r) { return cellText(geo(r.data), m); } },
                     host = { text: events ? '應用' : 'HOST', dataIndex: 'host', width: 240, renderer: cellText };
-                const columns = human ? [ip, location,
+                function seconds(v) { return Number.isFinite(v) && v >= 0 ? duration({ start_at: 0, end_at: v * 1000 }) : '—'; }
+                const app = { text: '應用', dataIndex: 'site_name', flex: 1, minWidth: 250, renderer: function (v, m, r) { return cellText(v + (r.data.domains && r.data.domains.length ? ' · ' + r.data.domains.join(', ') : ''), m); } };
+                const columns = cc ? waiting ? [app,
+                    { text: '允許活躍用戶', dataIndex: 'max_concurrent', width: 110, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
+                    { text: '總等候人數', dataIndex: 'total_waiting', width: 110, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
+                    { text: '峰值等候人數', dataIndex: 'top_waiting', width: 120, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
+                    { text: '平均等候時間', dataIndex: 'avg_wait_sec', width: 130, renderer: function (v) { return enc(seconds(v)); } },
+                    { text: '跳出率', dataIndex: 'bounce_rate', width: 95, align: 'right', renderer: function (v) { return Number.isFinite(v) ? enc(ctx.amount(v * 100)) + '%' : '—'; } },
+                    { text: '持續時間', dataIndex: 'dur_sec', width: 135, renderer: function (v, m, r) { return enc(seconds(v) + (r.data.ended_at === 0 ? '（進行中）' : '')); } },
+                    { text: '開始時間', dataIndex: 'started_at', width: 185, renderer: function (v) { return enc(ctx.date(v)); } }]
+                    : [ip, Object.assign({}, location, { width: 220 }), app,
+                        { text: '觸發原因', dataIndex: 'reason', flex: 1, minWidth: 260, renderer: function (v, m, r) { return cellText(ctx.amount(r.data.period) + ' 秒內觸發 ' + ctx.amount(r.data.count) + ' 次 · ' + (v || '—'), m); } },
+                        { text: '處理方式', dataIndex: 'result', width: 170, renderer: function (v, m, r) { return cellText((({ block: '攔截', challenge_v1: '人機驗證', challenge_v2: '滑動驗證' })[v] || v || '—') + ' · ' + ctx.amount(r.data.block_min) + ' 分鐘', m); } },
+                        { text: '攔截次數', dataIndex: 'denied_count', width: 100, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
+                        { text: '觸發時間', dataIndex: 'created_at', width: 185, renderer: function (v) { return enc(ctx.date(v)); } },
+                        { text: '狀態', dataIndex: 'status', width: 100, renderer: function (v) { return enc(v === 0 ? '已解封' : Number.isInteger(v) && v > 0 ? '限制中' : '—'); } }]
+                    : human ? [ip, location,
                     { text: '應用', dataIndex: 'site_name', flex: 1, minWidth: 160, maxWidth: 280, renderer: cellText },
                     { text: '域名', dataIndex: 'domains', flex: 1, minWidth: 200, renderer: function (v, meta) { return cellText(Array.isArray(v) && v.length ? v.join(', ') : '—', meta); } },
                     { text: '觸發次數', dataIndex: 'trigger_count', width: 100, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
@@ -243,8 +262,8 @@
                     { text: '持續時間', dataIndex: 'dur_sec', width: 145, renderer: function (v, m, r) { return enc(Number.isFinite(v) && v >= 0 ? duration({ start_at: 0, end_at: v * 1000 }) + (r.data.ended_at === 0 ? '（進行中）' : '') : '—'); } },
                     { text: '開始時間', dataIndex: 'started_at', width: 185, renderer: function (v) { return enc(ctx.date(v, true)); } }]
                     : events ? [ip, icon, location, host,
-                    { text: '放行攻擊', dataIndex: 'pass_count', width: 100, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
-                    { text: '攔截攻擊', dataIndex: 'deny_count', width: 100, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
+                    { text: rulePage ? '放行命中' : '放行攻擊', dataIndex: 'pass_count', width: 100, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
+                    { text: rulePage ? '攔截命中' : '攔截攻擊', dataIndex: 'deny_count', width: 100, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
                     { text: '持續時間', dataIndex: 'duration', width: 120, renderer: function (v, m, r) { return enc(duration(r.data)); } },
                     { text: '開始時間', dataIndex: 'start_at', flex: 1, minWidth: 180, maxWidth: 240, renderer: function (v) { return enc(ctx.date(v, true)); } },
                     { text: '結束時間', dataIndex: 'end_at', flex: 1, minWidth: 180, maxWidth: 240, renderer: function (v) { return enc(ctx.date(v, true)); } }]
@@ -253,8 +272,9 @@
                             const label = enc(action(v));
                             return v === 0 || v === 1 ? '<span class="sl-log-action sl-log-action-' + (v === 1 ? 'deny' : 'allow') + '">' + label + '</span>' : label;
                         } }, ip, icon, location, host,
-                        { text: '路徑', dataIndex: 'url_path', flex: 1, minWidth: 200, renderer: cellText }, { text: '攻擊類型', dataIndex: 'attack_type', width: 130, renderer: function (v) { return enc(attack(v)); } }];
-                if (!events && !human && data.module_in_list !== false) columns.push({ text: '命中防護模組', dataIndex: 'module', width: 190, renderer: function (v) { return enc(moduleName(v)); } });
+                        { text: '路徑', dataIndex: 'url_path', flex: 1, minWidth: 200, renderer: cellText }, { text: rulePage ? '類型' : '攻擊類型', dataIndex: 'attack_type', width: 130, renderer: function (v) { return enc(attack(v)); } }];
+                if (rulePage && !events) columns.push({ text: '規則名稱', dataIndex: 'policy_name', width: 240, renderer: cellText }, { text: '規則 ID', dataIndex: 'policy_rule_id', width: 90, renderer: function (v) { return enc(v == null ? '—' : v); } });
+                if (!events && !simple && !rulePage && data.module_in_list !== false) columns.push({ text: '命中防護模組', dataIndex: 'module', width: 190, renderer: function (v) { return enc(moduleName(v)); } });
                 let panel, table;
                 function scheduleFit() {
                     if (serial !== state.logSerial || !alive(table)) return;
@@ -282,19 +302,23 @@
                 function apply() {
                     const form = panel.down('#safeline-attack-filters'); if (!form.getForm().isValid()) return;
                     const next = {}, value = function (name) { return form.down('[name=' + name + ']').getValue(); };
-                    (human ? ['ip', 'site'] : ['ip', 'host', 'port', 'action', 'attack_type', 'event_id', 'url', 'ja4_fingerprint']).forEach(function (key) {
+                    (simple ? waiting ? ['site'] : ['ip', 'site'] : ['ip', 'host', 'port', 'action', 'attack_type', 'event_id', 'url', 'ja4_fingerprint', 'policy_rule_id']).forEach(function (key) {
                         const field = form.down('[name=' + key + ']'); if (!field) return;
                         const raw = field.getValue(), text = (Array.isArray(raw) ? raw.join(',') : String(raw == null ? '' : raw)).trim(); if (text) next[key] = text;
                     });
                     for (const key of ['start', 'end']) { const date = value(key); if (date) { if (!Number.isFinite(date.getTime()) || date.getTime() < 0) return; next[key] = date.getTime(); } }
                     if (next.start != null && next.end != null && next.start > next.end) { panel.down('#safeline-attack-status').setText('開始時間不能晚於結束時間'); return; }
-                    state.logHours = human ? 0 : Number(value('hours')) || 0; state.logAutoRefresh = Number(value('auto_refresh')) || 0;
+                    state.logHours = simple ? 0 : Number(value('hours')) || 0; state.logAutoRefresh = Number(value('auto_refresh')) || 0;
                     state.logFilters = next; state.logPage = 1; state.logRelated = false; render(context);
                 }
                 const config = ctx.grid(data.items, columns); config.itemId = 'safeline-attack-grid'; config.region = 'center';
                 config.tbar = null;
                 config.listeners = { celldblclick: function (view, td, index, record) { cell(table, index, record, events, context, source); },
                     afterlayout: scheduleFit, resize: scheduleFit, columnresize: scheduleFit, columnhide: scheduleFit, columnshow: scheduleFit };
+                if (cc && !waiting) {
+                    config.selModel = { selType: 'checkboxmodel', mode: 'MULTI' };
+                    config.listeners.selectionchange = function (model, records) { if (alive(panel)) panel.down('#safeline-cc-relieve-selected').setDisabled(!records.some(function (r) { return Number.isInteger(r.data.status) && r.data.status > 0; })); };
+                }
                 config.bbar = [{ text: '上一頁', disabled: state.logPage <= 1, handler: function () { state.logPage--; render(context); } },
                     { xtype: 'tbtext', text: enc('第 ' + state.logPage + ' 頁 · 共 ' + data.total + ' 筆') },
                     { text: '下一頁', disabled: state.logPage * size >= data.total, handler: function () { state.logPage++; render(context); } }, '->',
@@ -303,14 +327,19 @@
                 const tools = [];
                 if (!context) tools.push({ text: '攻擊事件', enableToggle: true, pressed: events, handler: function () { state.logMode = 'events'; state.logPage = 1; state.logFilters = {}; state.logRelated = false; render(context); } },
                     { text: '攻擊日誌', enableToggle: true, pressed: !events, handler: function () { state.logMode = 'records'; state.logPage = 1; state.logFilters = {}; state.logRelated = false; render(context); } });
-                if (!policy && !human) tools.push(Object.assign(combo('source', '', source, [['general', '一般檢測'], ['rule', '自訂規則']]), { width: 125, listeners: { select: function (f) { state.logSource = f.getValue(); state.logPage = 1; render(context); } } }));
+                if (!policy && !simple && !rulePage) tools.push(Object.assign(combo('source', '', source, [['general', '一般檢測'], ['rule', '自訂規則']]), { width: 125, listeners: { select: function (f) { state.logSource = f.getValue(); state.logPage = 1; render(context); } } }));
                 if (human) tools.push({ xtype: 'tbtext', text: '人機驗證記錄' });
+                if (cc || rulePage) tools.push({ xtype: 'tbtext', text: pageTitle });
                 tools.push('->', { text: '篩選／刷新', iconCls: 'fa fa-refresh', handler: apply }, { text: '清除篩選', handler: function () { state.logFilters = {}; state.logHours = 0; state.logPage = 1; state.logRelated = false; render(context); } });
                 if (human) tools.push({ text: '配置', iconCls: 'fa fa-cog', handler: challengeConfig });
+                if (cc && !waiting) tools.push({ text: '解封所選', itemId: 'safeline-cc-relieve-selected', disabled: true, handler: function () {
+                    const ids = table.getSelectionModel().getSelection().filter(function (r) { return r.data.status > 0; }).map(function (r) { return r.data.id; });
+                    if (ids.length) ctx.relieve(ids, filters, function () { render(context); });
+                } }, { text: '解封全部', handler: function () { ctx.relieve(null, filters, function () { render(context); }); } }, { text: '全域配置', iconCls: 'fa fa-cog', handler: ctx.configureCC });
                 ctx.show({ xtype: 'panel', itemId: 'safeline-attacks', border: false, layout: 'border',
                     items: [{ xtype: 'panel', region: 'north', border: false, layout: 'anchor', tbar: { enableOverflow: true, items: tools },
-                        items: [filterForm(events, filters, apply, human)] }, config],
-                    bbar: [{ xtype: 'tbtext', itemId: 'safeline-attack-status', text: enc(human ? '雙擊來源 IP 加入 IP 組；應用按名稱或備註模糊搜尋，時間按記錄開始時間篩選' : state.logRelated ? '已按事件來源、Host、端口、起訖時間及動作篩選' : events ? '雙擊來源 IP 加入 IP 組；雙擊攻擊次數查看日誌' : '雙擊來源 IP 加入 IP 組；雙擊其他欄位查看詳情') }],
+                        items: [filterForm(events, filters, apply, simple, rulePage, waiting)] }, config],
+                    bbar: [{ xtype: 'tbtext', itemId: 'safeline-attack-status', text: enc(simple ? (waiting ? '' : '雙擊來源 IP 加入 IP 組；') + '應用按名稱或備註模糊搜尋，時間按記錄開始時間篩選' : state.logRelated ? '已按事件來源、Host、端口、起訖時間及動作篩選' : events ? '雙擊來源 IP 加入 IP 組；雙擊次數查看相關日誌' : '雙擊來源 IP 加入 IP 組；雙擊其他欄位查看詳情') }],
                     listeners: { destroy: function () {
                         if (state.logTimer) window.clearTimeout(state.logTimer);
                         if (state.logFitTimer) window.clearTimeout(state.logFitTimer);

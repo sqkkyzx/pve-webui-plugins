@@ -123,7 +123,8 @@ def policy(value):
                 item["v"] = ["[REDACTED]"]
             output.append(item)
         patterns.append(output)
-    result = take(value, ("action", "is_enabled", "expire", "level", "order", "builtin", "log", "negate", "created_at", "updated_at", "req_count", "pass_count"))
+    result = take(value, ("action", "is_enabled", "expire", "level", "order", "builtin", "log", "negate", "created_at", "updated_at", "req_count", "pass_count",
+                          "cloud_id", "cloud_total", "black_rule", "white_rule", "compatible", "creator"))
     result.update({"id": str(value["id"]), "kind": {0: "allow", 1: "deny"}.get(value.get("action"), "policies"),
                    "name": text(value.get("name")) or "規則 #" + str(value["id"]), "status": status, "pattern": patterns})
     return result
@@ -162,7 +163,7 @@ def event(value):
 
 def record(value):
     result = take(value, ("src_ip", "host", "url_path", "dst_port", "action", "attack_type", "created_at", "timestamp", "method",
-                           "status_code", "rule_id", "policy_name", "event_id", "reason", "country", "province", "city", "module", "ja4_fingerprint", "protocol"))
+                           "status_code", "rule_id", "policy_name", "policy_rule_id", "policy_rule_parent_id", "event_id", "reason", "country", "province", "city", "module", "ja4_fingerprint", "protocol"))
     for name in ("req_header", "rsp_header"):
         result[name] = re.sub(r"(?im)^([^:\r\n]+):[^\r\n]*", lambda match:
             match[1] + ": [REDACTED]" if _SECRET.search(match[1]) else match[0], text(value.get(name), 32768))

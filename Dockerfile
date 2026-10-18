@@ -4,7 +4,7 @@ ARG SOURCE_REVISION=unknown
 ARG SOURCE_REPOSITORY=https://github.com/sqkkyzx/pve-webui-plugins
 LABEL org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      org.opencontainers.image.version="0.11.0" \
+      org.opencontainers.image.version="0.12.0" \
       org.opencontainers.image.description="Non-invasive, selectable WebUI plugins for Proxmox VE" \
       org.opencontainers.image.licenses="GPL-3.0"
 

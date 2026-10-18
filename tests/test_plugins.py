@@ -55,11 +55,16 @@ def test_all_plugin_combinations_control_html_api_and_assets(enabled, tmp_path):
         attack_asset = "/pve-plugins/assets/safeline/attack-pages.js"
         assert client.get(attack_asset).status_code == (200 if "safeline" in enabled else 404)
         assert (attack_asset.encode() in body) == ("safeline" in enabled)
+        security_asset = "/pve-plugins/assets/safeline/security-pages.js"
+        assert client.get(security_asset).status_code == (200 if "safeline" in enabled else 404)
+        assert client.head(security_asset).status_code == (200 if "safeline" in enabled else 404)
+        assert (security_asset.encode() in body) == ("safeline" in enabled)
         if "safeline" in enabled:
             assert body.index(application_asset.encode()) < body.index(PATHS["safeline"][1].encode())
             assert body.index(attack_asset.encode()) < body.index(PATHS["safeline"][1].encode())
+            assert body.index(security_asset.encode()) < body.index(PATHS["safeline"][1].encode())
         assert client.get("/pve-plugins/api/safeline/applications/12/basic").status_code == (401 if "safeline" in enabled else 404)
-        for path in ("challenges", "configuration/challenge"):
+        for path in ("challenges", "configuration/challenge", "cc/history/rate", "cc/history/waiting", "cc/configuration", "cc/relieve", "policy-management/create", "policy-management/edit?id=2", "policy-management/order?action=1", "policy-management/subscribe"):
             assert client.get("/pve-plugins/api/safeline/" + path).status_code == (401 if "safeline" in enabled else 404)
         assert client.get("/pve-plugins/api/plugins").status_code == 401
         assert client.get("/?pve-plugins=off").content == DESKTOP

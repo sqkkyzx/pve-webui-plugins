@@ -1,7 +1,7 @@
 {
   "id": "safeline",
   "name": "SafeLine WAF",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "api_version": 1,
   "entrypoint": "plugins.safeline.plugin:setup",
   "requires": [],
@@ -9,6 +9,7 @@
   "assets": [
     {"source": "static/attack-pages.js", "url": "/pve-plugins/assets/safeline/attack-pages.js"},
     {"source": "static/application-pages.js", "url": "/pve-plugins/assets/safeline/application-pages.js"},
+    {"source": "static/security-pages.js", "url": "/pve-plugins/assets/safeline/security-pages.js"},
     {"source": "static/safeline.js", "url": "/pve-plugins/assets/safeline/safeline.js"}
   ]
 }

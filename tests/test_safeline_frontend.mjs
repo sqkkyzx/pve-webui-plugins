@@ -7,6 +7,7 @@ import { webcrypto } from 'node:crypto';
 const source = readFileSync(new URL('../plugins/safeline/static/safeline.js', import.meta.url), 'utf8');
 const attackSource = readFileSync(new URL('../plugins/safeline/static/attack-pages.js', import.meta.url), 'utf8');
 const applicationSource = readFileSync(new URL('../plugins/safeline/static/application-pages.js', import.meta.url), 'utf8');
+const securitySource = readFileSync(new URL('../plugins/safeline/static/security-pages.js', import.meta.url), 'utf8');
 const base = '/pve-plugins/api/safeline';
 
 function browser() {
@@ -36,6 +37,7 @@ function browser() {
         return { data: { ...data }, parentNode: parent, childNodes: [], get(key) { return this.data[key]; }, getId() { return this.data.id; },
             set(value) { Object.assign(this.data, value); }, findChild(key, value) { return this.childNodes.find((n) => n.get(key) === value); },
             appendChild(value) { const n = node(value, this); this.childNodes.push(n); for (const c of value.children || []) n.appendChild(c); return n; },
+            insertChild(index, child) { child.remove(); child.parentNode = this; this.childNodes.splice(index, 0, child); return child; },
             remove() { this.parentNode.childNodes = this.parentNode.childNodes.filter((n) => n !== this); }, removeAll() { this.childNodes = []; } };
     }
     function store(config = {}) {
@@ -97,6 +99,7 @@ function browser() {
     setTimeout(fn) { const timer = { fn }; timers.add(timer); return timer; }, clearTimeout(timer) { timers.delete(timer); }, document: { hidden: false }, console: { warn: (...args) => warnings.push(args) } } });
     vm.runInContext(attackSource, context);
     vm.runInContext(applicationSource, context);
+    vm.runInContext(securitySource, context);
     vm.runInContext(source, context);
     const workspace = create('PVE.StdWorkspace'); workspace.xtype = 'pveStdWorkspace';
     const owner = create('Ext.Component', { ownerCt: workspace });
@@ -109,6 +112,168 @@ function browser() {
     }
     return { context, create, workspace, native, requests, enter, reply, timers, windows, warnings, owner, opened };
 }
+
+const securityMeta = { values: {}, locked: [], fingerprint: 'c'.repeat(64), connection_revision: 1, updated_at: '2026-10-19T00:00:00Z', capabilities: { premium: false },
+    options: { targets: [
+        { id: 'src_ip', name: '來源 IP', operators: [{ id: 'eq', name: '等於' }, { id: 'in', name: '屬於 IP 組' }] },
+        { id: 'req_header', name: '請求 Header', operators: [{ id: 'eq', name: '等於' }, { id: 'exist', name: '存在' }, { id: 'not_exist', name: '不存在' }] },
+        { id: 'website', name: '防護應用', operators: [{ id: 'eq', name: '等於' }, { id: 'not_eq', name: '不等於' }] },
+        { id: 'method', name: '請求方法', operators: [{ id: 'eq', name: '等於' }, { id: 'not_eq', name: '不等於' }] },
+        { id: 'ja4', name: 'JA4 指紋', operators: [{ id: 'eq', name: '等於' }, { id: 'ja4_in', name: '屬於指紋庫' }] }],
+        groups: [{ id: 7, comment: '<office>' }], sites: [{ id: 12, comment: 'Admin', server_names: ['app.example'] }], ja4: [{ id: 81, name: 'JA4 library' }], geo: [] } };
+const policyRules = [{ id: '1', kind: 'deny', name: 'Built in', action: 1, builtin: true, order: 0, is_enabled: true, pattern: [], status: { code: 'running', label: '已啟用' } },
+    { id: '2', kind: 'deny', name: 'First', action: 1, cloud_id: 0, order: 1, is_enabled: true, pattern: [[{ k: 'src_ip', op: 'eq', sub_k: '', v: ['192.0.2.1'] }]], status: { code: 'running', label: '已啟用' } },
+    { id: '3', kind: 'deny', name: 'Second', action: 1, cloud_id: 0, order: 2, is_enabled: false, pattern: [], status: { code: 'paused', label: '已停用' } },
+    { id: '4', kind: 'allow', name: 'Allow', action: 0, cloud_id: 0, order: 1, is_enabled: true, pattern: [], status: { code: 'running', label: '已啟用' } },
+    { id: '9', kind: 'policies', name: 'Mixed', action: 999, cloud_id: 80, black_rule: 2, white_rule: 1, pattern: [], status: { code: 'running', label: '已啟用' } }];
+function policyInventory() {
+    const d = inventory(); d.resources.deny = policyRules.filter(r => r.action === 1); d.resources.allow = policyRules.filter(r => r.action === 0); d.policies = policyRules.filter(r => r.action === 999); return d;
+}
+function policyList(b, state) {
+    b.reply('/connection', connection); b.reply('/inventory', policyInventory());
+    state.tree.fire('itemclick', {}, state.tree.getStore().getNodeById('type:lists'));
+    b.reply('/policy-management/order?action=1', { ...securityMeta, rules: policyRules });
+    return state.page.down('#safeline-policy-list');
+}
+function button(component, text) { return component.children.find(c => c.text === text); }
+
+test('resource tree merges both lists with action prefixes and aliases mixed libraries without changing resource identity', () => {
+    const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', policyInventory());
+    const store = state.tree.getStore(), parent = store.getNodeById('type:lists');
+    assert.equal(parent.get('text'), '黑白名單 (6)'); assert.equal(store.getNodeById('type:deny'), undefined); assert.equal(store.getNodeById('type:allow'), undefined);
+    assert.equal(store.getNodeById('deny:2').get('text'), '攔截：First'); assert.equal(store.getNodeById('allow:4').get('text'), '放行：Allow');
+    assert.equal(store.getNodeById('list:allow:9').get('kind'), 'policies'); assert.equal(store.getNodeById('list:deny:9').get('resourceId'), '9');
+    state.tree.fire('itemclick', {}, parent);
+    assert.equal(state.selection.kind, 'lists'); assert.equal(state.page.down('#safeline-nav').getStore().rows.map(r => r.get('name')).join(','), '黑名單,白名單,檢測事件,檢測日誌');
+});
+
+test('both policy lists have add, subscription and edit controls with native one-line states', () => {
+    const b = browser(), state = b.enter(), table = policyList(b, state);
+    assert.ok(table.down('#safeline-policy-add')); assert.ok(table.down('#safeline-policy-subscribe')); assert.ok(table.down('#safeline-policy-edit'));
+    const mark = table.columns.find(c => c.dataIndex === 'is_enabled').renderer;
+    assert.match(mark(true), /fa-check/); assert.ok(!mark(false).includes('fa-check'));
+    const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById('allow'));
+    b.reply('/policy-management/order?action=0', { ...securityMeta, rules: policyRules });
+    const white = state.page.down('#safeline-policy-list'); assert.ok(white.down('#safeline-policy-add')); assert.ok(white.down('#safeline-policy-subscribe'));
+    assert.equal(white.getStore().rows.map(r => r.data.id).join(','), '9,4');
+});
+
+test('inventory order updates move existing rule tree nodes while retaining identities', () => {
+    const b = browser(), state = b.enter(); policyList(b, state); const store = state.tree.getStore(), before = store.getNodeById('deny:2');
+    state.tree.tbar[0].handler(); const fresh = policyInventory(); fresh.resources.deny = [policyRules[0], policyRules[2], policyRules[1]];
+    b.reply('/inventory', fresh);
+    assert.equal(store.getNodeById('deny:2'), before);
+    const ids = store.getNodeById('type:lists').childNodes.map(n => n.getId()); assert.ok(ids.indexOf('deny:3') < ids.indexOf('deny:2'));
+});
+
+test('order edits are drafts, exclude fixed rules and send the full permutation only on apply', () => {
+    const b = browser(), state = b.enter(), table = policyList(b, state);
+    table.getSelectionModel().select(table.getStore().getById('3')); const before = b.requests.length;
+    button(table, '上移').handler(); assert.equal(b.requests.length, before);
+    assert.equal(table.getStore().rows.map(r => r.data.id).join(','), '1,9,3,2'); assert.equal(table.down('#safeline-policy-add').disabled, true);
+    table.down('#safeline-policy-order-save').handler();
+    const request = b.requests.at(-1); assert.equal(request.options.method, 'POST'); assert.equal(request.options.headers['X-PVE-Plugins-CSRF'], 'csrf-value');
+    assert.equal(JSON.stringify(request.options.jsonData.changes), '{"ids":[3,2]}');
+    b.reply('/policy-management/order?action=1', { outcome: 'unknown', code: 'safeline_write_unknown' }, 200, request);
+    const count = b.requests.length; table.down('#safeline-policy-order-save').handler(); assert.equal(b.requests.length, count);
+    assert.match(table.down('#safeline-policy-order-status').text, /尚未確認/);
+});
+
+test('rule popup switches target-specific inputs and captures AND/OR existence conditions only on save', () => {
+    const b = browser(), state = b.enter(), table = policyList(b, state); table.down('#safeline-policy-add').handler();
+    b.reply('/policy-management/create', securityMeta); const dialog = state.editor;
+    dialog.down('[name=name]').setValue('Header rule');
+    let target = dialog.down('[name=k]'); target.setValue('req_header'); target.fire('select', target);
+    dialog.down('[name=sub_k]').setValue('User-Agent'); let op = dialog.down('[name=op]'); op.setValue('exist'); op.fire('select', op);
+    assert.equal(dialog.down('[name=v]'), null); assert.ok(dialog.down('displayfield'));
+    dialog.down('#safeline-policy-add-or').handler();
+    const groups = dialog.down('#safeline-policy-groups'); assert.equal(groups.children.length, 2);
+    groups.children[1].down('[name=v]').setValue('192.0.2.9');
+    assert.ok(!b.requests.some(r => r.options.method === 'POST'));
+    dialog.down('#safeline-security-dialog-save').handler(); const request = b.requests.at(-1);
+    const changes = JSON.parse(JSON.stringify(request.options.jsonData.changes));
+    assert.equal(request.options.method, 'POST'); assert.equal(changes.insert_position, 'first'); assert.equal(changes.action, 1);
+    assert.deepEqual(changes.pattern, [[{ k: 'req_header', op: 'exist', sub_k: 'User-Agent', v: [] }], [{ k: 'src_ip', op: 'eq', sub_k: '', v: ['192.0.2.9'] }]]);
+    b.reply('/policy-management/create', { detail: 'invalid_safeline_security' }, 422, request);
+    assert.equal(dialog.down('#safeline-security-dialog-save').disabled, false, 'a rejected validation can be corrected without losing the draft');
+});
+
+test('IP group, application and JA4 conditions offer known selectable IDs with encoded labels', () => {
+    const b = browser(), state = b.enter(), table = policyList(b, state); table.down('#safeline-policy-add').handler(); b.reply('/policy-management/create', securityMeta);
+    const dialog = state.editor; let op = dialog.down('[name=op]'); op.setValue('in'); op.fire('select', op);
+    let value = dialog.down('[name=v]'); assert.equal(value.xtype, 'combo'); assert.equal(value.forceSelection, true); assert.equal(value.multiSelect, true);
+    assert.equal(value.getStore().rows[0].get('id'), '7'); assert.equal(value.listConfig.getInnerTpl(), '{name:htmlEncode}');
+    let target = dialog.down('[name=k]'); target.setValue('website'); target.fire('select', target);
+    value = dialog.down('[name=v]'); assert.equal(value.getStore().rows[0].get('id'), '12');
+    target = dialog.down('[name=k]'); target.setValue('ja4'); target.fire('select', target);
+    op = dialog.down('[name=op]'); op.setValue('ja4_in'); op.fire('select', op); assert.equal(dialog.down('[name=v]').getStore().rows[0].get('id'), '81');
+    dialog.down('#safeline-security-dialog-cancel').handler(); assert.ok(!b.requests.some(r => r.options.method === 'POST'));
+});
+
+test('subscription review displays both action counts and sends one selected whole-library ID', () => {
+    const b = browser(), state = b.enter(), table = policyList(b, state); table.down('#safeline-policy-subscribe').handler();
+    b.reply('/policy-management/subscribe', { ...securityMeta, catalog: [{ id: 80, policy_name: 'Mixed <library>', black_rule: 2, white_rule: 1, compatible: 3, added: false }] });
+    const dialog = state.editor, catalog = dialog.down('#safeline-subscription-grid'), row = catalog.getStore().rows[0];
+    catalog.fire('selectionchange', catalog.getSelectionModel(), [row]);
+    assert.match(dialog.down('#safeline-security-dialog-status').text, /2 條黑名單、1 條白名單；訂閱整個規則庫/);
+    assert.ok(dialog.down('#safeline-security-dialog-status').text.includes('&lt;library&gt;'));
+    dialog.down('#safeline-security-dialog-save').handler(); const request = b.requests.at(-1);
+    assert.equal(JSON.stringify(request.options.jsonData.changes), '{"id":80}');
+    b.reply('/policy-management/subscribe', { outcome: 'unknown', code: 'safeline_write_unknown' }, 200, request);
+    const count = b.requests.length; dialog.down('#safeline-security-dialog-save').handler(); assert.equal(b.requests.length, count);
+});
+
+function ccPage(b, state, kind = 'rate') {
+    b.reply('/connection', connection); b.reply('/inventory', inventory()); state.logHours = 24;
+    const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById('cc-' + kind));
+    const row = kind === 'rate' ? { id: 19, status: 1, ip: '192.0.2.1', period: 60, count: 50, block_min: 30, result: 'challenge_v1', denied_count: 216, site_name: 'Admin', domains: ['app.example'] }
+        : { site_name: 'Admin', domains: ['app.example'], max_concurrent: 5, total_waiting: 9, top_waiting: 7, avg_wait_sec: 22, bounce_rate: .44, dur_sec: 110, started_at: 1790146412, ended_at: 1790146522 };
+    const table = replyAttackQuery(b, state, [row], 150), panel = state.page.down('#safeline-attacks');
+    return { row, table, panel, form: panel.down('#safeline-attack-filters'), tools: panel.children[0].tbar.items };
+}
+
+test('CC rate and waiting pages use dedicated columns, second-based waiting time and their own height fit', () => {
+    const b = browser(), state = b.enter(), rate = ccPage(b, state);
+    assert.ok(state.page.down('#safeline-nav').getStore().getById('cc')); assert.ok(rate.tools.some(c => c.text === '全域配置'));
+    assert.equal(rate.table.columns.find(c => c.dataIndex === 'denied_count').renderer(216), '216');
+    fitAttackTable(b, state, rate.table, 501); assert.ok(b.requests.at(-1).options.url.includes('/cc/history/rate?page=1&page_size=20'));
+    const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById('cc-waiting')); const waiting = replyAttackQuery(b, state, [{ bounce_rate: .44, started_at: 1790146412 }], 150);
+    assert.ok(!state.page.down('#safeline-attack-filters').down('[name=ip]'));
+    assert.equal(waiting.columns.find(c => c.dataIndex === 'bounce_rate').renderer(.44), '44%');
+    assert.equal(waiting.columns.find(c => c.dataIndex === 'started_at').renderer(1790146412), new Date(1790146412000).toLocaleString());
+    fitAttackTable(b, state, waiting, 751); const url = b.requests.at(-1).options.url;
+    assert.ok(url.includes('/cc/history/waiting?page=1&page_size=30')); assert.ok(!url.includes('source=') && !url.includes('start='));
+});
+
+test('CC unblock only sends explicitly reviewed active IDs under the applied filters', () => {
+    const b = browser(), state = b.enter(), { table, panel, tools } = ccPage(b, state); const row = table.getStore().rows[0];
+    table.getSelectionModel().select(row); table.fire('selectionchange', table.getSelectionModel(), [row]); assert.equal(panel.down('#safeline-cc-relieve-selected').disabled, false);
+    tools.find(c => c.text === '解封所選').handler(); b.reply('/cc/relieve', { ...securityMeta, values: { ids: [19, 20] } });
+    const dialog = state.editor; assert.match(dialog.down('#safeline-security-dialog-body').children[0].html, /1 筆/);
+    assert.ok(!b.requests.some(r => r.options.method === 'POST')); dialog.down('#safeline-security-dialog-save').handler();
+    assert.equal(JSON.stringify(b.requests.at(-1).options.jsonData.changes), '{"ids":[19]}');
+});
+
+test('global CC edits remain local child drafts and save just changed thresholds', () => {
+    const b = browser(), state = b.enter(), { tools } = ccPage(b, state); tools.find(c => c.text === '全域配置').handler();
+    b.reply('/cc/configuration', { ...securityMeta, values: { rules: [{ id: 1, name: 'CC', enabled: true, period: 10, count: 500, block_min: 60, action: 'challenge_v1', custom_status_codes: [] }] } });
+    const dialog = state.editor, table = dialog.down('#safeline-global-cc-rules'); table.fire('itemdblclick', {}, table.getStore().rows[0]);
+    const child = b.windows.at(-1); child.down('[name=count]').setValue(600); button(child, '套用至草稿').handler();
+    assert.ok(child.destroyed); assert.ok(!b.requests.some(r => r.options.method === 'POST'));
+    dialog.down('#safeline-security-dialog-save').handler(); assert.equal(JSON.stringify(b.requests.at(-1).options.jsonData.changes), '{"rules":[{"id":1,"count":600}]}');
+});
+
+test('detection events drill into detection logs with the precise event filter and direct rule metadata', () => {
+    const b = browser(), state = b.enter(); policyList(b, state); const nav = state.page.down('#safeline-nav');
+    nav.fire('itemclick', {}, nav.getStore().getById('events')); let request = b.requests.at(-1); assert.ok(request.options.url.includes('/events?page=1&page_size=20&source=rule'));
+    let table = replyAttackQuery(b, state, [attackEvent], 167); doubleCell(table, 'deny_count'); request = b.requests.at(-1);
+    assert.equal(state.tab, 'logs'); const params = new URL(request.options.url, 'https://pve.example').searchParams;
+    assert.equal(params.get('source'), 'rule'); assert.equal(params.get('ip'), attackEvent.ip); assert.equal(params.get('host'), attackEvent.host);
+    assert.equal(params.get('action'), '1'); assert.equal(params.get('start'), String(attackEvent.start_at)); assert.equal(params.get('end'), String(attackEvent.end_at));
+    table = replyAttackQuery(b, state, [{ ...attackRecord, policy_name: 'Rule', policy_rule_id: 7, attack_type: -3 }], 1311);
+    assert.ok(table.columns.some(c => c.dataIndex === 'policy_name')); assert.ok(table.columns.some(c => c.dataIndex === 'policy_rule_id')); assert.ok(!table.columns.some(c => c.dataIndex === 'module'));
+    doubleCell(table, 'policy_name'); assert.equal(state.editor.title, '檢測日誌詳情'); assert.ok(b.requests.at(-1).options.url.endsWith('/records/log-id?source=rule'));
+});
 
 const connection = { configured: true, revision: 1, source: 'saved', csrf_token: 'csrf-value', connection: { url: 'https://10.101.100.101:9443', token_configured: true, tls_verify: true, tls_server_name: 'waf.example', ca_pem: '' } };
 function inventory(name = '<img src=x onerror=alert(1)>', code = 'running') {
@@ -166,7 +331,7 @@ test('SafeLine view loads through its own API and restores the native and contai
     b.reply('/connection', connection);
     assert.equal(state.tree.getStore().getNodeById('type:applications').get('text'), '防護應用', 'unloaded counts are not zero');
     b.reply('/inventory', inventory());
-    assert.equal(state.tree.getRootNode().childNodes.length, 5);
+    assert.equal(state.tree.getRootNode().childNodes.length, 4);
     assert.equal(state.tree.getStore().getNodeById('applications:12').get('text'), '<img src=x onerror=alert(1)>');
     const renderer = state.tree.columns[0].renderer;
     assert.ok(renderer('<img>', {}, state.tree.getStore().getNodeById('applications:12')).includes('&lt;img&gt;'));
