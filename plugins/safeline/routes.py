@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 from plugins.safeline.client import SafeLineClient
 from plugins.safeline.connection import Connection, SafeLineError
 from plugins.safeline.editing import EditCommand, ResourceEditor
+from plugins.safeline.application_pages import ApplicationEditor, SECTIONS
 from plugins.safeline.service import KINDS, now
 
 
@@ -70,6 +71,7 @@ def register_routes(context, store, service):
     application, authenticator, csrf = context.application, context.authenticator, context.csrf
     base = "/pve-plugins/api/safeline"
     editor = ResourceEditor(service)
+    applications = ApplicationEditor(editor)
 
     async def authorize(request, *, write=False):
         user = await authenticator.authenticate(request)
@@ -174,6 +176,46 @@ def register_routes(context, store, service):
         integer(identifier, 1, 9_007_199_254_740_991)
         try:
             return {"user": user, **await service.detail(kind, identifier, section)}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
+    def application_section(request, identifier, section):
+        query(request, set())
+        integer(identifier, 1, 9_007_199_254_740_991)
+        if section not in SECTIONS:
+            raise HTTPException(422, "invalid_safeline_resource")
+
+    @application.get(base + "/applications/{identifier}/{section}")
+    async def application_page(request: Request, identifier: str, section: str):
+        user = await authorize(request)
+        application_section(request, identifier, section)
+        try:
+            return {"user": user, **await applications.load(identifier, section)}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
+    @application.put(base + "/applications/{identifier}/{section}")
+    async def save_application_page(request: Request, identifier: str, section: str):
+        user = await authorize(request, write=True)
+        application_section(request, identifier, section)
+        if section == "basic":
+            raise HTTPException(422, "invalid_safeline_resource")
+        value = await command(request, EditCommand)
+        try:
+            return {"user": user, **await applications.save(identifier, section, value, user)}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
+    @application.get(base + "/applications/{identifier}/logs/{kind}/preview")
+    async def application_log_preview(request: Request, identifier: str, kind: str):
+        user = await authorize(request)
+        integer(identifier, 1, 9_007_199_254_740_991)
+        values = query(request, {"filename"})
+        filename = values.get("filename", "")
+        if kind not in {"access", "error"} or not re.fullmatch(r"[A-Za-z0-9_.-]{1,256}", filename) or filename in {".", ".."}:
+            raise HTTPException(422, "invalid_safeline_query")
+        try:
+            return {"user": user, **await applications.log_preview(identifier, kind, filename)}
         except SafeLineError as error:
             raise HTTPException(error.status, error.code) from None
 

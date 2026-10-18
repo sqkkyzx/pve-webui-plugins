@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 
 const source = readFileSync(new URL('../plugins/safeline/static/safeline.js', import.meta.url), 'utf8');
+const applicationSource = readFileSync(new URL('../plugins/safeline/static/application-pages.js', import.meta.url), 'utf8');
 const base = '/pve-plugins/api/safeline';
 
 function browser() {
@@ -37,10 +38,11 @@ function browser() {
             remove() { this.parentNode.childNodes = this.parentNode.childNodes.filter((n) => n !== this); }, removeAll() { this.childNodes = []; } };
     }
     function store(config = {}) {
-        const s = { rows: [], loadData(data) { this.rows = data.map((v) => ({ data: v, get: (k) => v[k], getId: () => v.id })); },
+        function record(v) { return { data: v, get: (k) => v[k], getId: () => v.id, set(key, value) { if (typeof key === 'object') Object.assign(v, key); else v[key] = value; } }; }
+        const s = { rows: [], loadData(data) { this.rows = data.map(record); },
             getById(id) { return this.rows.find((r) => r.getId() === id); }, clearFilter() {}, filterBy(fn) { this.rows = this.rows.filter(fn); } };
         s.each = (fn) => s.rows.forEach(fn);
-        s.add = (v) => s.rows.push({ data: v, get: (k) => v[k], getId: () => v.id });
+        s.add = (v) => s.rows.push(record(v));
         s.remove = (rows) => { s.rows = s.rows.filter((row) => !rows.includes(row)); };
         s.loadData(config.data || []);
         if (config.root) {
@@ -66,7 +68,7 @@ function browser() {
         up(selector) { let p = this.ownerCt; while (p) { if (p.xtype === selector) return p; p = p.ownerCt; } return null; },
         getStore() { return this.dataStore; }, getRootNode() { return this.dataStore.root; }, getSelectionModel() { return this.selection; },
         setVisible(value) { this.hidden = !value; }, setText(value) { this.text = value; }, update(value) { this.html = value; }, setDisabled(value) { this.disabled = value; },
-        getValue() { return this.xtype === 'checkbox' ? !!this.checked : this.value; }, setValue(value) { this.value = value; },
+        getValue() { return this.xtype === 'checkbox' ? !!this.checked : this.value; }, setValue(value) { this.value = value; if (this.xtype === 'checkbox') this.checked = !!value; },
         getPlugins() { return []; },
         getEl() { return { on: (name, fn) => { this.elementEvents ||= {}; this.elementEvents[name] = fn; }, down: () => ({ focus() {} }) }; },
         getForm() { return { isValid: () => true, getValues: () => Object.fromEntries(this.children.filter((c) => c.name).map((c) => [c.name, c.getValue()])) }; },
@@ -91,6 +93,7 @@ function browser() {
         request(options) { const request = { options, aborted: false }; requests.push(request); return request; }, abort(request) { request.aborted = true; },
     } }, crypto: webcrypto, Proxmox: { UserName: 'root@pam', Utils: { authOK: () => !!context.window.Proxmox.UserName } },
     setTimeout(fn) { const timer = { fn }; timers.add(timer); return timer; }, clearTimeout(timer) { timers.delete(timer); }, document: { hidden: false }, console: { warn: (...args) => warnings.push(args) } } });
+    vm.runInContext(applicationSource, context);
     vm.runInContext(source, context);
     const workspace = create('PVE.StdWorkspace'); workspace.xtype = 'pveStdWorkspace';
     const owner = create('Ext.Component', { ownerCt: workspace });
@@ -624,4 +627,162 @@ test('closing an option editor ignores late fresh settings and never submits a d
     b.reply('/configuration/proxy', latest, 200, pending);
     assert.equal(advancedRow(panel, 'gzip').get('value'), '停用');
     assert.equal(b.requests.some(r => r.options.method === 'PUT'), false);
+});
+
+function appData(values = {}, premium = true) {
+    return { values, locked: [], capabilities: { edition: premium ? 2 : 0, premium, business: premium, forwarding_limit: premium ? 100 : 3,
+        module_names: { m_sqli: 'SQL 注入檢測', m_xss: 'XSS 檢測' } }, fingerprint: 'd'.repeat(64), connection_revision: 1, updated_at: '2026-10-19T00:00:00Z' };
+}
+function appPage() {
+    const b = browser(), state = b.enter(), data = inventory('Management');
+    b.reply('/connection', connection); b.reply('/inventory', data);
+    state.tree.fire('itemclick', {}, state.tree.getStore().getNodeById('applications:12'));
+    const basic = appData({ resource: { ...data.resources.applications[0], access_type: 0, cc_enabled: false, bot_enabled: false, auth_enabled: true, attack_enabled: true } });
+    b.reply('/applications/12/basic', basic);
+    return { b, state, basic };
+}
+function appTab(state, key) { const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById(key)); }
+function appEditor(b, state, section, data, operation) {
+    state.applicationPages.edit(section, operation); const editor = state.editor;
+    assert.ok(editor); b.reply('/applications/12/' + section, data); return editor;
+}
+function appField(editor, key) { return editor.down('#safeline-app-input-' + key.replace(/[._]/g, '-')); }
+
+test('application leaves use five native pages and basic rows launch editable protection and log dialogs', () => {
+    const { b, state } = appPage(), nav = state.page.down('#safeline-nav');
+    assert.equal(nav.getStore().rows.map(r => r.get('id')).join(','), 'basic,forwarding,advanced,routes,tamper');
+    assert.ok(state.page.down('#safeline-app-basic'));
+    const tables = state.page.down('#safeline-app-basic').children.filter(c => c.xtype === 'grid');
+    assert.equal(tables.length, 2);
+    const controls = tables[1], auth = controls.getStore().getById('auth');
+    assert.ok(controls.columns[1].renderer(auth.get('value'), {}, auth).includes('fa-check'));
+    controls.fire('itemdblclick', {}, controls.getStore().getById('access'));
+    assert.equal(b.requests.at(-1).options.url, base + '/applications/12/log-access');
+    state.editor.close(); const nginx = appEditor(b, state, 'nginx', appData({ custom_location: [] }));
+    nginx.down('#safeline-app-save').handler(); assert.match(nginx.down('#safeline-app-edit-status').html, /未變更/);
+    assert.equal(b.requests.some(r => r.options.method === 'PUT'), false);
+});
+
+test('forwarding creates only the requested fields and keeps an unconfirmed draft without retry', () => {
+    const { b, state } = appPage(); appTab(state, 'forwarding'); b.reply('/applications/12/forwarding', appData({ rules: [] }));
+    const editor = appEditor(b, state, 'forwarding', appData({ rules: [] }), { action: 'create' });
+    appField(editor, 'path_prefix').setValue('/api'); appField(editor, 'upstreams').setValue('https://backend:443'); appField(editor, 'comment').setValue('API');
+    editor.down('#safeline-app-save').handler(); const request = b.requests.at(-1);
+    assert.equal(request.options.method, 'PUT'); assert.equal(request.options.headers['X-PVE-Plugins-CSRF'], connection.csrf_token);
+    assert.equal(JSON.stringify(request.options.jsonData.changes), '{"action":"create","values":{"path_prefix":"/api","upstreams":["https://backend:443"],"comment":"API"}}');
+    assert.equal(request.options.jsonData.fingerprint, 'd'.repeat(64));
+    editor.close(); assert.ok(!editor.destroyed);
+    b.reply('/applications/12/forwarding', { outcome: 'unknown', connection_revision: 1 }, 200, request);
+    assert.equal(appField(editor, 'path_prefix').getValue(), '/api'); assert.equal(editor.down('#safeline-app-save').disabled, true);
+    const count = b.requests.length; editor.down('#safeline-app-save').handler(); assert.equal(b.requests.length, count);
+});
+
+test('application advanced edits preserve inheritance and free editions can restore global values', () => {
+    const { b, state } = appPage(); appTab(state, 'advanced');
+    const data = advancedData(false); data.locked = Object.keys(data.values); data.global_values = advancedData().values;
+    data.values.gzip = { global: false, value: true };
+    b.reply('/applications/12/advanced', data); b.reply('/applications/12/nginx', { ...appData({ custom_location: [] }, false), locked: ['custom_location'] });
+    const panel = state.page.down('#safeline-advanced'); assert.equal(panel.applicationId, '12');
+    assert.equal(advancedRow(panel, 'gzip').get('value'), true); assert.equal(advancedRow(panel, 'gzip').get('source'), '自訂');
+    panel.fire('itemdblclick', {}, advancedRow(panel, 'gzip')); const editor = state.editor;
+    b.reply('/applications/12/advanced', data);
+    assert.equal(advancedField(editor, 'gzip').disabled, true); assert.equal(editor.down('#safeline-advanced-save').disabled, true);
+    advancedField(editor, 'inherit-mode').setValue('inherit'); advancedField(editor, 'inherit-mode').fire('select');
+    editor.down('#safeline-advanced-save').handler();
+    assert.equal(JSON.stringify(b.requests.at(-1).options.jsonData.changes), '{"gzip":{"global":true,"value":true}}');
+});
+
+test('application TLS can explicitly override unchanged inherited values', () => {
+    const { b, state } = appPage(); appTab(state, 'advanced');
+    const data = advancedData(); data.values.ssl_protocols.global = true; data.global_values = advancedData().values;
+    b.reply('/applications/12/advanced', data); b.reply('/applications/12/nginx', appData({ custom_location: [] }));
+    const panel = state.page.down('#safeline-advanced'); panel.fire('itemdblclick', {}, advancedRow(panel, 'ssl_protocols'));
+    const editor = state.editor; b.reply('/applications/12/advanced', data);
+    advancedField(editor, 'inherit-mode').setValue('custom'); advancedField(editor, 'inherit-mode').fire('select'); editor.down('#safeline-advanced-save').handler();
+    assert.equal(b.requests.at(-1).options.jsonData.changes.ssl_protocols.global, false);
+});
+
+test('CC rule edits stay in a draft until the parent is saved and preserve sensitive conditions', () => {
+    const { b, state } = appPage(), rule = { id: 70, name: '訪問限制', type: 'req', built_in: true, use_global: false, enabled: true, period: 10, count: 500, block_min: 30,
+        action: 'challenge_v1', priority: 1, custom_status_codes: [] };
+    const data = { ...appData({ waiting: { is_enabled: false, max_concurrent: 5, session_timeout: 3 }, use_global: false, rules: [rule] }), locked: ['conditions:70'] };
+    const editor = appEditor(b, state, 'cc', data), table = appField(editor, 'rules'); table.fire('itemdblclick', {}, table.getStore().getById(70));
+    const child = b.windows.at(-1); child.down('#safeline-cc-rule-count').setValue(900);
+    child.children.find(c => c.text === '套用至草稿').handler();
+    assert.equal(table.getStore().getById(70).get('count'), 900); assert.ok(!b.requests.some(r => r.options.method === 'PUT'));
+    editor.down('#safeline-app-save').handler(); const changes = b.requests.at(-1).options.jsonData.changes;
+    assert.equal(changes.rules[0].count, 900); assert.equal('conditions' in changes.rules[0], false);
+});
+
+test('BOT free controls remain configurable while licensed fields are omitted from writes', () => {
+    const { b, state } = appPage(), values = { enable: false, negate: false, pattern: [], level: 1, expire: 3600, replay: false,
+        chaos: { html_encryption: false, js_encryption: false, img_encryption: false, html_fast_decryption: false, js_path: [], img_text: '' } };
+    const editor = appEditor(b, state, 'bot', appData(values, false));
+    assert.equal(appField(editor, 'level').disabled, true); assert.equal(appField(editor, 'replay').disabled, true);
+    appField(editor, 'enable').setValue(true); appField(editor, 'chaos.html_encryption').setValue(true); editor.down('#safeline-app-save').handler();
+    assert.equal(JSON.stringify(b.requests.at(-1).options.jsonData.changes), '{"enable":true,"chaos":{"html_encryption":true}}');
+});
+
+test('unified authentication takes its login sources and TOTP option from the portal', () => {
+    const { b, state } = appPage(), values = { enable: true, negate: true, pattern: [], auth_source_ids: [0], review: 1, auth_callback: '', tfa_enabled: true,
+        portal_redirect: '', auth_challenge_timeout: 5, auth_challenge_timeout_unit: 'day' };
+    const data = { ...appData(values), sources: [{ id: 0, name: '帳號密碼' }, { id: 1, name: 'OIDC' }], portal: { enable: true, auth_sources: [{ id: 1 }], tfa_enabled: false } };
+    const editor = appEditor(b, state, 'auth', data); appField(editor, 'auth_mode').setValue('portal'); appField(editor, 'auth_mode').fire('select');
+    assert.equal(appField(editor, 'auth_source_ids').disabled, true); assert.equal(appField(editor, 'tfa_enabled').getValue(), false);
+    appField(editor, 'auth_source_ids').setValue(['1']); appField(editor, 'review').setValue('1');
+    appField(editor, 'portal_redirect').setValue('https://app.example'); editor.down('#safeline-app-save').handler();
+    const changes = b.requests.at(-1).options.jsonData.changes; assert.equal(JSON.stringify(changes.auth_source_ids), '[1]'); assert.equal(changes.tfa_enabled, false);
+});
+
+test('semantic module modes and bulk changes only submit known changed modules', () => {
+    const { b, state } = appPage(), data = appData({ use_global: false, modules: { m_sqli: 'default', m_xss: 'strict', future: 'disable' } });
+    data.capabilities.module_names.m_ssrf = 'SSRF 檢測';
+    const editor = appEditor(b, state, 'attack', data);
+    appField(editor, 'modules').getStore().getById('m_sqli').set('mode', 'dry_run'); editor.down('#safeline-app-save').handler();
+    assert.equal(JSON.stringify(b.requests.at(-1).options.jsonData.changes), '{"modules":{"m_sqli":"dry_run"}}');
+});
+
+test('CC inheritance shows global values and retains several new local draft rules across source changes', () => {
+    const { b, state } = appPage(), rule = { id: 70, name: '', type: 'req', built_in: true, use_global: true, enabled: true, period: 10, count: 500,
+        block_min: 30, action: 'challenge_v1', priority: 1, conditions: [], custom_status_codes: [] };
+    const data = { ...appData({ waiting: { is_enabled: false, max_concurrent: 5, session_timeout: 3 }, use_global: true, rules: [rule] }), global_rules: [{ ...rule, id: 1, count: 900 }] };
+    const editor = appEditor(b, state, 'cc', data), table = appField(editor, 'rules'), source = appField(editor, 'use_global');
+    assert.equal(table.getStore().rows[0].get('count'), 900); assert.equal(table.disabled, true);
+    source.setValue('false'); source.fire('select'); assert.equal(table.getStore().rows[0].get('id'), 70);
+    const add = table.children.find(c => c.text === '新增規則'); add.handler(add); add.handler(add);
+    assert.equal(new Set(table.getStore().rows.map(r => r.get('id'))).size, 3);
+    source.setValue('true'); source.fire('select'); source.setValue('false'); source.fire('select');
+    assert.equal(table.getStore().rows.length, 3); editor.down('#safeline-app-save').handler();
+    assert.equal(b.requests.at(-1).options.jsonData.changes.rules.filter(r => r.id === 0).length, 2);
+});
+
+test('switching application advanced pages cannot reuse an old panel or accept its late settings', () => {
+    const b = browser(), state = b.enter(), data = inventory('first'); data.resources.applications.push({ ...data.resources.applications[0], id: '13', name: 'second' });
+    b.reply('/connection', connection); b.reply('/inventory', data);
+    state.tree.fire('itemclick', {}, state.tree.getStore().getNodeById('applications:12')); appTab(state, 'advanced');
+    const first = state.page.down('#safeline-advanced');
+    state.tree.fire('itemclick', {}, state.tree.getStore().getNodeById('applications:13')); appTab(state, 'advanced'); const second = state.page.down('#safeline-advanced');
+    assert.equal(first.destroyed, true); assert.equal(second.applicationId, '13');
+    b.reply('/applications/12/advanced', advancedData()); assert.equal(second.getStore().rows[0].get('value'), '正在讀取…');
+    b.reply('/applications/13/advanced', advancedData()); b.reply('/applications/13/nginx', appData({ custom_location: [] }));
+    assert.equal(advancedRow(second, 'gzip').get('source'), '全域');
+});
+
+test('route folders preserve resource identities and paid-only tamper buttons stay disabled', () => {
+    const { b, state } = appPage(); appTab(state, 'routes'); b.reply('/applications/12/routes', appData({ total: 2, resources: [
+        { id: 61, path: '/api/users', method: 'GET' }, { id: 62, path: '/api/groups', method: 'GET' }] }));
+    const tree = state.page.down('#safeline-app-routes'); assert.equal(tree.getStore().getNodeById('folder:/api').childNodes.length, 2);
+    assert.equal(tree.getStore().getNodeById('resource:61').get('resource_id'), 61);
+    appTab(state, 'tamper'); b.reply('/applications/12/tamper', appData({ data: [], resources: [], refresh_state: '' }, false));
+    const panel = state.page.down('#safeline-app-page'), table = panel.children.find(c => c.xtype === 'grid');
+    assert.ok(table.children.filter(c => ['新增資源', '重新檢查', '接受目前內容', '移除資源'].includes(c.text)).every(c => c.disabled));
+});
+
+test('application log preview encodes lines and closing its parent destroys late previews', () => {
+    const { b, state } = appPage(), editor = appEditor(b, state, 'log-access', appData({ limit: 1024, files: [{ filename: 'access.log', size: 100 }] }));
+    const files = editor.down('#safeline-app-log-files'); files.fire('itemdblclick', {}, files.getStore().rows[0]); const preview = b.windows.at(-1);
+    const path = '/applications/12/logs/access/preview?filename=access.log';
+    b.reply(path, { lines: ['<script>unsafe</script>'], truncated: true, connection_revision: 1 });
+    assert.match(preview.down('#safeline-log-preview').html, /&lt;script&gt;/);
+    editor.close(); assert.equal(preview.destroyed, true);
 });

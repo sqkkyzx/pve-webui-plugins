@@ -65,6 +65,7 @@ def waf_fixture():
                 else: pytest.fail("Unexpected mutation: " + path)
             return httpx.Response(200, json={"data": None, "err": "", "msg": "ok"})
         if path == "/api/open/site/12": value = state["site"]
+        elif path == "/api/open/system/edition": value = {"effective_edition": 2}
         elif path == "/api/open/site/12/proxy": value = state["proxy"]
         elif path == "/api/open/site": value = {"data": [state["site"]], "total": 1}
         elif path == "/api/open/policy/detail": value = state["policy"]
@@ -255,7 +256,7 @@ def test_pending_reservations_survive_restarts_and_do_not_store_plaintext(editin
     store.close()
 
 
-@pytest.mark.parametrize("method,path", [("DELETE", "/api/open/site"), ("POST", "/api/open/site"), ("PUT", "/api/open/global/mode"), ("PUT", "/api/open/site/12/acl")])
+@pytest.mark.parametrize("method,path", [("DELETE", "/api/open/site"), ("POST", "/api/open/site"), ("PUT", "/api/open/global/mode"), ("PUT", "/api/open/site/12/resources")])
 def test_write_allowlist_is_narrow(method, path):
     async def invoke():
         await SafeLineClient(Connection(URL, TOKEN)).write(method, path, {})

@@ -143,7 +143,14 @@ class ResourceEditor:
                 if not isinstance(value, dict):
                     raise SafeLineError("safeline_edit_unsupported", 409)
                 return take(value, _PROXY_FIELDS)
-            return take(value, (*_SITE_FIELDS, "mode", "is_enabled"))
+            result = take(value, (*_SITE_FIELDS, "mode", "is_enabled"))
+            if section == "settings":
+                try:
+                    edition = await client.get("/api/open/system/edition")
+                    result["_edition"] = edition.get("effective_edition", edition.get("version"))
+                except (SafeLineError, AttributeError):
+                    result["_edition"] = None
+            return result
         if kind in {"deny", "allow", "policies"} and section in {"settings", "switch"}:
             value = await client.get("/api/open/policy/detail", {"id": identifier})
             if not isinstance(value, dict) or str(value.get("id")) != identifier:
@@ -183,6 +190,8 @@ class ResourceEditor:
                           type(v.get("global")) is bool and type(v.get("value")) is (str if k in _PROXY_STRING else bool)}
             else:
                 values = take(raw, ApplicationPatch.model_fields)
+                if raw.get("_edition") not in {1, 2}:
+                    locked.append("stat_enabled")
         elif kind in {"deny", "allow", "policies"}:
             if section == "switch":
                 values = take(raw, ("is_enabled",))
