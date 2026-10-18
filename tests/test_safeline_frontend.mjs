@@ -413,40 +413,65 @@ function startAdvanced(b, state, data = advancedData()) {
     const nav = state.page.down('#safeline-nav'); assert.ok(nav.getStore().getById('advanced'));
     nav.fire('itemclick', {}, nav.getStore().getById('advanced'));
     b.reply('/configuration/proxy', data);
-    b.reply('/configuration/groups', { ...data, values: { enable: false }, locked: data.capabilities.premium ? [] : ['enable'] });
+    b.reply('/configuration/groups', advancedGroups(data));
     return state.page.down('#safeline-advanced');
 }
+function advancedGroups(data = advancedData()) { return { ...data, fingerprint: 'c'.repeat(64), values: { enable: false }, locked: data.capabilities.premium ? [] : ['enable'] }; }
 function advancedField(panel, key) { return panel.down('#safeline-advanced-' + key.replace(/[._]/g, '-')); }
+function advancedRow(panel, key) { const row = panel.getStore().getById(key); assert.ok(row, key); return row; }
+function selectAdvanced(panel, key) { panel.getSelectionModel().select(advancedRow(panel, key)); panel.fire('selectionchange'); }
+function openAdvanced(b, state, panel, key, data = key === 'groups' ? advancedGroups() : advancedData(), toolbar = false) {
+    selectAdvanced(panel, key);
+    if (toolbar) panel.down('#safeline-advanced-edit').handler();
+    else panel.fire('itemdblclick', {}, advancedRow(panel, key));
+    const pending = b.requests.at(-1);
+    assert.equal(pending.options.method, 'GET', 'each editor reads fresh settings');
+    b.reply(key === 'groups' ? '/configuration/groups' : '/configuration/proxy', data, 200, pending);
+    assert.ok(state.editor);
+    return state.editor;
+}
 
-test('application type has a global advanced page with native options and independent group settings', () => {
+test('advanced configuration uses compact native option rows and opens contextual editors from the toolbar or double click', () => {
     const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
     assert.equal(state.selection.kind, 'applications'); assert.equal(state.selection.id, undefined);
-    assert.equal(advancedField(panel, 'source').getStore().rows.length, 7);
-    assert.equal(advancedField(panel, 'xff-position').getStore().rows.map(r => r.data.id).join(','), 'from_start,from_end');
-    assert.equal(advancedField(panel, 'xff-index').maxValue, 100);
-    assert.equal(advancedField(panel, 'ssl_protocols').xtype, 'tagfield');
-    assert.equal(advancedField(panel, 'ssl_protocols').getStore().rows.length, 6);
-    assert.equal(panel.down('#safeline-advanced-save-proxy').disabled, false);
-    assert.equal(panel.down('#safeline-advanced-save-groups').disabled, false);
-    assert.ok(!JSON.stringify(panel.down('#safeline-advanced-headers').getStore().rows).includes('private-header'));
+    assert.equal(panel.xtype, 'grid'); assert.equal(panel.columns.map(c => c.text).join(','), '項目,值');
+    assert.equal(panel.getStore().rows.length, 18); assert.equal(panel.down('form'), null);
+    assert.equal(panel.down('#safeline-advanced-edit').disabled, true);
+    assert.ok(advancedRow(panel, 'source').get('value').includes('從左往右，第 1 個 IP'));
+    assert.equal(advancedRow(panel, 'http_headers').get('value'), '1 項操作');
+    let editor = openAdvanced(b, state, panel, 'source', advancedData(), true);
+    assert.equal(advancedField(editor, 'source').getStore().rows.length, 7);
+    assert.equal(advancedField(editor, 'xff-position').getStore().rows.map(r => r.data.id).join(','), 'from_start,from_end');
+    assert.equal(advancedField(editor, 'xff-index').maxValue, 100);
+    assert.equal(advancedField(editor, 'header').disabled, true, 'hidden controls do not invalidate other source methods');
+    assert.equal(advancedField(editor, 'gzip'), null, 'only the selected option is present');
+    editor.close(); editor = openAdvanced(b, state, panel, 'ssl_protocols');
+    assert.equal(advancedField(editor, 'ssl_protocols').xtype, 'tagfield');
+    assert.equal(advancedField(editor, 'ssl_protocols').getStore().rows.length, 6);
 });
 
-test('advanced save sends a minimal CSRF-protected patch and leaves original XFF formatting untouched', () => {
+test('an option save uses fresh fingerprints, sends only its changed fields and blocks duplicate submissions', () => {
     const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
-    advancedField(panel, 'gzip').checked = true;
-    panel.down('#safeline-advanced-save-proxy').handler();
+    const latest = advancedData(); latest.fingerprint = 'd'.repeat(64);
+    const editor = openAdvanced(b, state, panel, 'gzip', latest);
+    advancedField(editor, 'gzip').checked = true; editor.down('#safeline-advanced-save').handler();
     const request = b.requests.at(-1).options;
     assert.equal(request.method, 'PUT'); assert.equal(request.url, base + '/configuration/proxy');
     assert.equal(request.headers['X-PVE-Plugins-CSRF'], 'csrf-value');
     assert.equal(JSON.stringify(request.jsonData.changes), JSON.stringify({ gzip: { global: true, value: true } }));
-    assert.equal(request.jsonData.fingerprint, 'b'.repeat(64)); assert.equal(request.jsonData.expected_revision, 1);
+    assert.equal(request.jsonData.fingerprint, 'd'.repeat(64)); assert.equal(request.jsonData.expected_revision, 1);
     assert.match(request.jsonData.operation_id, /^[0-9a-f-]{36}$/);
+    const count = b.requests.length; editor.down('#safeline-advanced-save').handler(); assert.equal(b.requests.length, count);
+    editor.close(); assert.equal(editor.destroyed, undefined, 'pending writes keep their editor open');
 });
 
-test('source IP controls produce the native dynamic XFF representation', () => {
+test('source IP edits preserve untouched XFF formatting and submit source and value together when changed', () => {
     const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
-    advancedField(panel, 'xff-position').value = 'from_end'; advancedField(panel, 'xff-index').value = 2;
-    panel.down('#safeline-advanced-save-proxy').handler();
+    const editor = openAdvanced(b, state, panel, 'source'), count = b.requests.length;
+    editor.down('#safeline-advanced-save').handler(); assert.equal(b.requests.length, count);
+    assert.ok(editor.down('#safeline-advanced-edit-status').html.includes('設定未變更'));
+    advancedField(editor, 'xff-position').value = 'from_end'; advancedField(editor, 'xff-index').value = 2;
+    editor.down('#safeline-advanced-save').handler();
     const changes = b.requests.at(-1).options.jsonData.changes;
     assert.equal(changes.ip_source.value, 'xff_dynamic');
     assert.equal(changes.ip_value.value, '{"position":"from_end","index":2}');
@@ -456,29 +481,34 @@ test('source IP controls produce the native dynamic XFF representation', () => {
 
 test('personal edition keeps basic editing available while locking paid configuration', () => {
     const b = browser(), state = b.enter(), panel = startAdvanced(b, state, advancedData(false));
-    assert.equal(advancedField(panel, 'gzip').disabled, false);
-    assert.equal(advancedField(panel, 'ssl_protocols').disabled, true);
-    assert.equal(panel.down('#safeline-advanced-headers').disabled, true);
-    assert.equal(advancedField(panel, 'enable').disabled, true);
-    assert.equal(panel.down('#safeline-advanced-save-groups').disabled, true);
-    advancedField(panel, 'gzip').checked = true; panel.down('#safeline-advanced-save-proxy').handler();
+    for (const key of ['ssl_protocols', 'ssl_ciphers', 'http_headers', 'groups']) {
+        assert.ok(advancedRow(panel, key).get('value').includes('需專業版或商業版'));
+        selectAdvanced(panel, key); assert.equal(panel.down('#safeline-advanced-edit').disabled, true);
+        const count = b.requests.length; panel.fire('itemdblclick', {}, advancedRow(panel, key));
+        assert.equal(b.requests.length, count); assert.equal(state.editor, null);
+    }
+    const editor = openAdvanced(b, state, panel, 'gzip', advancedData(false));
+    advancedField(editor, 'gzip').checked = true; editor.down('#safeline-advanced-save').handler();
     assert.equal(JSON.stringify(b.requests.at(-1).options.jsonData.changes), JSON.stringify({ gzip: { global: true, value: true } }));
 });
 
-test('inventory polling preserves advanced controls and unsaved drafts', () => {
-    const b = browser(), state = b.enter(), panel = startAdvanced(b, state), source = advancedField(panel, 'source');
-    advancedField(panel, 'gzip').checked = true;
+test('polling pauses during an option edit and explicit inventory refresh preserves the draft', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state), editor = openAdvanced(b, state, panel, 'gzip');
+    advancedField(editor, 'gzip').checked = true;
+    const count = b.requests.length;
     for (const timer of [...b.timers]) timer.fn();
+    assert.equal(b.requests.length, count, 'polling cannot overwrite an editor');
+    state.tree.tbar[0].handler();
     b.reply('/inventory', inventory('renamed'));
-    assert.equal(state.page.down('#safeline-advanced'), panel); assert.equal(advancedField(panel, 'source'), source);
-    assert.equal(advancedField(panel, 'gzip').getValue(), true);
-    assert.equal(b.requests.filter(r => r.options.url === base + '/configuration/proxy').length, 1);
+    assert.equal(state.page.down('#safeline-advanced'), panel); assert.equal(state.editor, editor);
+    assert.equal(advancedField(editor, 'gzip').getValue(), true);
+    assert.equal(b.requests.filter(r => r.options.url === base + '/configuration/proxy').length, 2, 'refresh does not reload settings behind the dialog');
 });
 
 test('private header references survive editing other rows and never become plaintext values', () => {
-    const b = browser(), state = b.enter(), panel = startAdvanced(b, state), table = panel.down('#safeline-advanced-headers');
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state), editor = openAdvanced(b, state, panel, 'http_headers'), table = editor.down('#safeline-advanced-headers');
     table.getStore().add({ target: 'res', op: 'set', key: 'Cache-Control', val: 'no-store' });
-    panel.down('#safeline-advanced-save-proxy').handler();
+    editor.down('#safeline-advanced-save').handler();
     const rows = b.requests.at(-1).options.jsonData.changes.http_headers.value;
     assert.equal(rows[0].val, ''); assert.equal(rows[0].keep, 0); assert.equal(rows[1].target, 'res');
     assert.equal(Object.keys(b.requests.at(-1).options.jsonData.changes).length, 1);
@@ -486,24 +516,68 @@ test('private header references survive editing other rows and never become plai
 
 test('group settings use their own fingerprint and confirmed writes reload only their section', () => {
     const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
-    advancedField(panel, 'enable').checked = true; panel.down('#safeline-advanced-save-groups').handler();
+    const editor = openAdvanced(b, state, panel, 'groups');
+    advancedField(editor, 'enable').checked = true; editor.down('#safeline-advanced-save').handler();
     const pending = b.requests.at(-1);
     assert.equal(pending.options.url, base + '/configuration/groups');
+    assert.equal(pending.options.jsonData.fingerprint, 'c'.repeat(64));
     assert.equal(JSON.stringify(pending.options.jsonData.changes), '{"enable":true}');
     b.reply('/configuration/groups', { outcome: 'confirmed', connection_revision: 1 }, 200, pending);
+    assert.equal(editor.destroyed, true); assert.equal(state.editor, null);
     assert.equal(b.requests.at(-1).options.method, 'GET');
     assert.equal(b.requests.at(-1).options.url, base + '/configuration/groups');
     assert.equal(b.requests.filter(r => r.options.url === base + '/configuration/proxy').length, 1);
+    b.reply('/configuration/groups', { ...advancedGroups(), values: { enable: true } });
+    assert.equal(advancedRow(panel, 'groups').get('value'), '啟用');
+    assert.equal(panel.getSelectionModel().getSelection()[0].get('id'), 'groups');
 });
 
 test('unconfirmed advanced writes retain the draft, disable retries and cannot update a logged-out view', () => {
     const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
-    advancedField(panel, 'gzip').checked = true; panel.down('#safeline-advanced-save-proxy').handler();
+    const editor = openAdvanced(b, state, panel, 'gzip');
+    advancedField(editor, 'gzip').checked = true; editor.down('#safeline-advanced-save').handler();
     const pending = b.requests.at(-1);
     b.reply('/configuration/proxy', { outcome: 'unknown', connection_revision: 1 }, 200, pending);
-    assert.equal(advancedField(panel, 'gzip').getValue(), true); assert.equal(panel.down('#safeline-advanced-save-proxy').disabled, true);
+    assert.equal(advancedField(editor, 'gzip').getValue(), true); assert.equal(editor.down('#safeline-advanced-save').disabled, true);
+    const beforeRetry = b.requests.length; editor.down('#safeline-advanced-save').handler(); assert.equal(b.requests.length, beforeRetry);
     const count = b.requests.length; b.workspace.onLogin(null);
     assert.equal(state.page, null); assert.equal(b.requests.length, count);
     b.reply('/configuration/proxy', { ...advancedData(), values: { secret: 'late-private-data' } }, 200, pending);
     assert.equal(state.page, null);
+});
+
+test('global refresh completes option reloads and preserves the selected row', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
+    selectAdvanced(panel, 'gzip'); state.tree.tbar[0].handler();
+    const pending = b.requests.findLast(r => r.options.url === base + '/configuration/proxy');
+    assert.equal(pending.aborted, false, 'navigation refresh cannot cancel its own settings reload');
+    const latest = advancedData(); latest.values.gzip.value = true;
+    b.reply('/configuration/proxy', latest, 200, pending);
+    b.reply('/configuration/groups', advancedGroups());
+    assert.equal(advancedRow(panel, 'gzip').get('value'), '啟用');
+    assert.equal(panel.getSelectionModel().getSelection()[0].get('id'), 'gzip');
+    assert.equal(panel.down('#safeline-advanced-edit').disabled, false);
+});
+
+test('the HSTS row edits its related settings without touching other proxy options', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state), editor = openAdvanced(b, state, panel, 'hsts');
+    assert.equal(advancedField(editor, 'hsts_max_age').disabled, true);
+    advancedField(editor, 'hsts').checked = true; advancedField(editor, 'hsts').fire('change');
+    assert.equal(advancedField(editor, 'hsts_max_age').disabled, false);
+    advancedField(editor, 'hsts_max_age').value = '31536000'; advancedField(editor, 'hsts_sub').checked = true;
+    editor.down('#safeline-advanced-save').handler();
+    const patch = b.requests.at(-1).options.jsonData.changes;
+    assert.equal(Object.keys(patch).sort().join(','), 'hsts,hsts_max_age,hsts_sub');
+    assert.equal(patch.hsts.value, true); assert.equal(patch.hsts_max_age.value, '31536000'); assert.equal(patch.hsts_max_age.global, false);
+});
+
+test('closing an option editor ignores late fresh settings and never submits a draft', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
+    panel.fire('itemdblclick', {}, advancedRow(panel, 'gzip'));
+    const pending = b.requests.at(-1), editor = state.editor;
+    editor.close(); assert.equal(state.editor, null);
+    const latest = advancedData(); latest.values.gzip.value = true;
+    b.reply('/configuration/proxy', latest, 200, pending);
+    assert.equal(advancedRow(panel, 'gzip').get('value'), '停用');
+    assert.equal(b.requests.some(r => r.options.method === 'PUT'), false);
 });

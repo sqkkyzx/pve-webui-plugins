@@ -549,100 +549,173 @@
             viewConfig:{emptyText:disabled?'此版本無法編輯 Header 操作':'尚未設定 Header 操作',deferEmptyText:false}};
     }
     function renderAdvanced(state) {
-        if(alive(state.page.down('#safeline-advanced')))return;
-        const generation=state.generation,who=user(state),paths={proxy:'/configuration/proxy',groups:'/configuration/groups'};
-        const loaded={},pending={},operations={proxy:uuid(),groups:uuid()};let panel;
-        function id(key){return 'safeline-advanced-'+key.replace(/[._]/g,'-');}
-        function field(key){return panel.down('#'+id(key));}
-        function value(key){const input=field(key);return input?input.getValue():null;}
-        function notice(section,text){if(alive(panel))panel.down('#safeline-advanced-status-'+section).update(enc(text));}
-        function saveButton(section){return panel.down('#safeline-advanced-save-'+section);}
-        function saving(section,busy){pending[section]=busy;const form=panel.down('#safeline-advanced-'+section+'-form');if(alive(form)&&typeof form.setLoading==='function')form.setLoading(busy?'正在儲存…':false);}
-        function input(key,config){return Object.assign({itemId:id(key),name:key},config);}
-        function hint(text){return {xtype:'displayfield',value:enc(text),fieldStyle:'opacity:.7;font-size:12px'};}
-        function box(title,items,extra){return Object.assign({xtype:'fieldset',title:title,layout:'anchor',padding:14,margin:'0 0 16 0',defaults:{anchor:'100%',labelWidth:265},items:items},extra);}
-        function allowed(key){return loaded.proxy&&key in loaded.proxy.values&&!loaded.proxy.locked.includes(key);}
-        function sync(){
-            const source=value('source'),hsts=!!value('hsts');
-            ['header','trusted-proxies','xff-position','xff-index'].forEach(function(k){const f=field(k);if(f)f.setVisible(k==='header'?source==='http_header':k==='trusted-proxies'?source==='proxy_protocol':source==='xff_dynamic');});
-            if(field('host-value'))field('host-value').setVisible(!!value('host-enable'));
-            ['hsts_max_age','hsts_sub','hsts_preload'].forEach(function(k){if(field(k))field(k).setVisible(hsts);});
+        if (alive(state.page.down('#safeline-advanced'))) return;
+        const generation = state.generation, who = user(state), paths = { proxy: '/configuration/proxy', groups: '/configuration/groups' };
+        const loaded = {}, loading = {}, messages = {};
+        const sources = [['socket_ip', '直接取連線來源 IP'], ['xff_dynamic', '從 X-Forwarded-For 中取得'], ['http_header', '從指定 HTTP 標頭取得'],
+            ['proxy_protocol', '從 PROXY protocol 取得'], ['xff_first', 'XFF 最右側第 1 個 IP'], ['xff_second', 'XFF 最右側第 2 個 IP'], ['xff_third', 'XFF 最右側第 3 個 IP']];
+        const rows = [
+            ['source', '源 IP 取得方式', ['ip_source', 'ip_value']], ['ipv6', '監聽 IPv6 地址'], ['http_1.0', 'HTTP/1.0'], ['http2', 'HTTP/2'],
+            ['force_https', 'HTTP 自動跳轉到 HTTPS'], ['hsts', 'HSTS', ['hsts', 'hsts_max_age', 'hsts_sub', 'hsts_preload']], ['host', '代理請求 Host'],
+            ['forwarded', '傳送 X-Forwarded-Host／Proto', ['xfh', 'xfp']], ['reset_xff', '清空並重寫 X-Forwarded-For'], ['gzip', 'Gzip 壓縮'],
+            ['br', 'Brotli 壓縮'], ['sse', 'SSE 串流回應'], ['ntlm', 'NTLM 認證'], ['default_server', '應用不存在時返回內建憑證'],
+            ['ssl_protocols', 'SSL／TLS 協定'], ['ssl_ciphers', 'SSL Ciphers'], ['http_headers', 'HTTP Header 操作'], ['groups', '分組管理', ['enable']],
+        ].map(function (r) { return { id: r[0], name: r[1], keys: r[2] || [r[0]], section: r[0] === 'groups' ? 'groups' : 'proxy' }; });
+        let panel, editor;
+        function valid(data) { return data && data.values && Array.isArray(data.locked) && data.capabilities && typeof data.fingerprint === 'string'; }
+        function available(row, data) { return !!data && row.keys.every(function (key) { return key in data.values; }); }
+        function editable(row, data) { return available(row, data) && !row.keys.some(function (key) { return data.locked.includes(key); }); }
+        function selected() { const record = panel.getSelectionModel().getSelection()[0]; return record && rows.find(function (r) { return r.id === record.get('id'); }); }
+        function updateEdit() {
+            if (!alive(panel)) return;
+            const row = selected();
+            panel.down('#safeline-advanced-edit').setDisabled(alive(editor) || !row || !editable(row, loaded[row.section]));
+            panel.down('#safeline-advanced-reload').setDisabled(!!alive(editor));
         }
-        function populateProxy(data){
-            const v=data.values,premium=!!data.capabilities.premium,form=panel.down('#safeline-advanced-proxy-fields');
-            function old(key,fallback){return v[key]?v[key].value:fallback;}
-            function check(key,label){return input(key,{xtype:'checkbox',fieldLabel:label,checked:!!old(key,false),disabled:!allowed(key),listeners:{change:sync}});}
-            let xff={position:'from_end',index:1};try{if(old('ip_source')==='xff_dynamic')xff=Object.assign(xff,JSON.parse(old('ip_value')));}catch(e){/* Keep unknown values until explicitly changed. */}
-            const sources=[['socket_ip','直接取連線來源 IP'],['xff_dynamic','從 X-Forwarded-For 中取得'],['http_header','從指定 HTTP 標頭取得'],['proxy_protocol','從 PROXY protocol 取得'],['xff_first','XFF 最右側第 1 個 IP'],['xff_second','XFF 最右側第 2 個 IP'],['xff_third','XFF 最右側第 3 個 IP']];
-            if(v.ip_source&&!sources.some(function(row){return row[0]===v.ip_source.value;}))sources.push([v.ip_source.value,'目前值：'+v.ip_source.value]);
-            const source=input('source',combo('source','源 IP 取得方式',old('ip_source','socket_ip'),sources));source.listeners={select:sync};source.listConfig={itemTpl:'{name:htmlEncode}'};
-            const header=input('header',Object.assign(combo('header','HTTP 標頭',old('ip_source')==='http_header'?old('ip_value',''):'X-Real-IP',[['X-Real-IP','X-Real-IP'],['CF-Connecting-IP','CF-Connecting-IP'],['True-Client-IP','True-Client-IP']]),{editable:true,maxLength:256}));
-            const basic=[check('ipv6','監聽 IPv6 地址'),check('http_1.0','啟用 HTTP/1.0'),check('http2','啟用 HTTP/2'),check('force_https','HTTP 自動跳轉到 HTTPS'),hint('HTTP 跳轉需要應用同時監聽 HTTP 與 HTTPS 端口。'),
-                check('hsts','啟用 HSTS'),input('hsts_max_age',Object.assign(combo('hsts_max_age','HSTS 有效秒數',old('hsts_max_age','15768000'),[['15768000','半年（15768000）'],['31536000','一年（31536000）'],['63072000','兩年（63072000）'],['0','0']]),{editable:true,disabled:!allowed('hsts_max_age')})),check('hsts_sub','HSTS 包含子域名'),check('hsts_preload','HSTS 預載'),
-                input('host-enable',{xtype:'checkbox',fieldLabel:'代理時修改請求中的 Host',checked:!!old('host',''),disabled:!allowed('host'),listeners:{change:sync}}),
-                input('host-value',Object.assign(combo('host-value','Host',old('host','')||'$http_host',[['$http_host','原請求 Host（$http_host）'],['$host','解析後的主機名（$host）'],['$proxy_host','上游主機名（$proxy_host）']]),{editable:true,maxLength:1024,disabled:!allowed('host')})),
-                input('forwarded',{xtype:'checkbox',fieldLabel:'傳送 X-Forwarded-Host／Proto',checked:!!old('xfp',''),disabled:!allowed('xfp')||!allowed('xfh')}),
-                check('reset_xff','清空並重寫 X-Forwarded-For'),check('gzip','支援 Gzip 壓縮'),check('br','支援 Brotli 壓縮'),check('sse','支援 SSE 串流回應'),check('ntlm','啟用 NTLM 認證'),check('default_server','應用不存在時返回內建憑證')];
-            const protocols=Object.assign(combo('ssl_protocols','SSL／TLS 協定',(old('ssl_protocols','')||'').split(/\s+/).filter(Boolean),[['TLSv1.2','TLSv1.2'],['TLSv1.3','TLSv1.3'],['TLSv1','TLSv1.0（舊版）'],['TLSv1.1','TLSv1.1（舊版）'],['SSLv2','SSLv2（舊版）'],['SSLv3','SSLv3（舊版）']]),{xtype:'tagfield',multiSelect:true,forceSelection:true,filterPickList:true,disabled:!allowed('ssl_protocols')});
-            const sourceBox=box('源 IP 取得方式',[source,header,input('xff-position',combo('xff-position','XFF 取得方向',xff.position,[['from_start','從左往右'],['from_end','從右往左']])),input('xff-index',{xtype:'numberfield',fieldLabel:'IP 位置序號',value:xff.index,minValue:1,maxValue:100,allowDecimals:false,allowBlank:false}),
-                input('trusted-proxies',{xtype:'textareafield',fieldLabel:'信任的代理 IP／CIDR（每行一項）',value:old('ip_source')==='proxy_protocol'?old('ip_value','').split(',').join('\n'):'',height:90,maxLength:4096}),hint('XFF 位置從 1 開始；PROXY protocol 需與前置代理的設定一致。')],{disabled:!allowed('ip_source')||!allowed('ip_value')});
-            form.removeAll(true);[sourceBox,box('其他高級配置',basic),box('SSL 合規配置',[hint(premium?'選擇協定；密碼套件留空使用 SafeLine 預設。':'此區塊需 SafeLine 專業版或商業版授權。'),input('ssl_protocols',protocols),input('ssl_ciphers',Object.assign(combo('ssl_ciphers','SSL Ciphers',old('ssl_ciphers',''),[['','SafeLine 預設'],['HIGH:!aNULL:!MD5','HIGH:!aNULL:!MD5']]),{editable:true,maxLength:4096,disabled:!allowed('ssl_ciphers')}))]),
-                box('HTTP Header 操作',[hint(premium?'敏感標頭的現有值不回填：留空保留，填入新值替換。刪除動作無需填寫值。':'此區塊需 SafeLine 專業版或商業版授權。'),advancedHeaders(old('http_headers',[]),!allowed('http_headers'))])].forEach(function(config){form.add(config);});
-            loaded.proxy.source={source:old('ip_source','socket_ip'),header:old('ip_source')==='http_header'?old('ip_value',''):'X-Real-IP',position:xff.position,index:xff.index,proxies:old('ip_source')==='proxy_protocol'?old('ip_value',''):''};sync();
-        }
-        function readProxy(){
-            const original=loaded.proxy.values,changes={};
-            function put(key,next,global){if(allowed(key)&&JSON.stringify(original[key].value)!==JSON.stringify(next))changes[key]={global:global==null?original[key].global:global,value:next};}
-            ['ipv6','http_1.0','http2','force_https','hsts','hsts_sub','hsts_preload','gzip','br','sse','ntlm','default_server','reset_xff'].forEach(function(key){put(key,!!value(key),true);});
-            put('host',value('host-enable')?String(value('host-value')||'').trim():'',true);
-            if(allowed('xfp')&&!!value('forwarded')!==!!original.xfp.value){put('xfp',value('forwarded')?'$scheme':'',true);put('xfh',value('forwarded')?'$http_host':'',true);}
-            put('hsts_max_age',String(value('hsts_max_age')||'').trim());put('ssl_ciphers',String(value('ssl_ciphers')||'').trim());
-            if(allowed('ssl_protocols')){const protocols=value('ssl_protocols')||[],next=protocols.slice().sort().join(' ');if(original.ssl_protocols.value.split(/\s+/).filter(Boolean).sort().join(' ')!==next)put('ssl_protocols',next);}
-            if(allowed('ip_source')&&allowed('ip_value')){
-                const source=value('source'),old=loaded.proxy.source;let next='';
-                if(source==='http_header')next=String(value('header')||'').trim();
-                if(source==='proxy_protocol')next=String(value('trusted-proxies')||'').split(/[\r\n,]+/).map(function(v){return v.trim();}).filter(Boolean).join(',');
-                if(source==='xff_dynamic')next=JSON.stringify({position:value('xff-position'),index:value('xff-index')});
-                const changed=source!==old.source||source==='http_header'&&next!==old.header||source==='proxy_protocol'&&next!==old.proxies||source==='xff_dynamic'&&(value('xff-position')!==old.position||Number(value('xff-index'))!==Number(old.index));
-                if(changed){changes.ip_source={global:false,value:source};changes.ip_value={global:false,value:next};}
+        function summary(row, data) {
+            if (!available(row, data)) return data ? '未提供' : messages[row.section] || '正在讀取…';
+            function v(key) { return data.values[key].value; }
+            if (row.section === 'groups') return data.values.enable ? '啟用' : '停用';
+            if (row.id === 'source') {
+                const source = sources.find(function (r) { return r[0] === v('ip_source'); });
+                let detail = v('ip_value');
+                if (v('ip_source') === 'xff_dynamic') {
+                    try { const xff = JSON.parse(detail); detail = (xff.position === 'from_start' ? '從左往右' : '從右往左') + '，第 ' + xff.index + ' 個 IP'; } catch (e) { /* Display the stored value. */ }
+                }
+                return (source ? source[1] : v('ip_source')) + (detail ? ' · ' + detail : '');
             }
-            if(allowed('http_headers')){
-                const table=panel.down('#safeline-advanced-headers'),rows=[];
-                table.getPlugins().forEach(function(plugin){if(typeof plugin.completeEdit==='function')plugin.completeEdit();});
-                table.getStore().each(function(record){const row=record.data,item={target:row.target,op:row.op,key:row.key,val:row.op==='del'?'':row.val};if(row.keep!=null&&!row.val&&row.op!=='del')item.keep=row.keep;rows.push(item);});put('http_headers',rows);
+            if (row.id === 'hsts') return v('hsts') ? '啟用 · ' + v('hsts_max_age') + ' 秒' + (v('hsts_sub') ? ' · 包含子域名' : '') + (v('hsts_preload') ? ' · 預載' : '') : '停用';
+            if (row.id === 'forwarded') return !v('xfh') && !v('xfp') ? '停用' : v('xfh') === '$http_host' && v('xfp') === '$scheme' ? '啟用' : '自訂 · Host: ' + v('xfh') + '，Proto: ' + v('xfp');
+            if (row.id === 'host') return v('host') || '停用';
+            if (row.id === 'http_headers') return v('http_headers').length + ' 項操作';
+            if (row.id === 'ssl_ciphers') return v('ssl_ciphers') || 'SafeLine 預設';
+            return typeof v(row.id) === 'boolean' ? v(row.id) ? '啟用' : '停用' : v(row.id);
+        }
+        function rebuild() {
+            if (!alive(panel)) return;
+            const selection = selected();
+            panel.getStore().loadData(rows.map(function (row) {
+                const data = loaded[row.section], locked = available(row, data) && !editable(row, data);
+                const reason = locked ? !data.capabilities.premium && (row.section === 'groups' || ['ssl_protocols', 'ssl_ciphers', 'http_headers'].includes(row.id)) ? '需專業版或商業版' : '無法編輯' : '';
+                return { id: row.id, name: row.name, value: summary(row, data) + (reason ? '（' + reason + '）' : '') };
+            }));
+            if (selection) panel.getSelectionModel().select(panel.getStore().getById(selection.id));
+            const issues = Object.keys(messages).filter(function (section) { return messages[section]; }).map(function (section) { return (section === 'proxy' ? '應用預設：' : '分組管理：') + messages[section]; });
+            panel.down('#safeline-advanced-status').setText(enc(issues.length ? issues.join('；') : '已讀取 · ' + date((loaded.proxy || loaded.groups).updated_at)));
+            updateEdit();
+        }
+        function load(section) {
+            if (loading[section] || !alive(panel)) return;
+            loading[section] = true; loaded[section] = null; messages[section] = '正在讀取…'; rebuild();
+            request(state, paths[section], {}, function (data) {
+                if (!alive(panel)) return;
+                loading[section] = false; loaded[section] = valid(data) ? data : null;
+                messages[section] = loaded[section] ? '' : message('safeline_unexpected_response'); rebuild();
+            }, function (code) { if (alive(panel)) { loading[section] = false; messages[section] = message(code); rebuild(); } }, false);
+        }
+        function edit(row) {
+            if (!row || !editable(row, loaded[row.section]) || alive(state.editor) || !state.connection.csrf_token || !current(state, generation, who)) return;
+            let dialog, data, pending = false, operation = uuid(), initialSource;
+            function field(key) { return dialog.down('#safeline-advanced-' + key.replace(/[._]/g, '-')); }
+            function value(key) { return field(key).getValue(); }
+            function input(key, config) { return Object.assign({ itemId: 'safeline-advanced-' + key.replace(/[._]/g, '-'), name: key }, config); }
+            function old(key) { return data.values[key].value; }
+            function hint(text) { return { xtype: 'displayfield', value: enc(text), fieldStyle: 'opacity:.7;font-size:12px' }; }
+            function notice(text) { if (alive(dialog)) dialog.down('#safeline-advanced-edit-status').update(enc(text)); }
+            function check(key, label, checked) { return input(key, { xtype: 'checkbox', fieldLabel: label, checked: checked == null ? !!old(key) : checked, listeners: { change: sync } }); }
+            function sync() {
+                function visible(key, show) { const f = field(key); if (f) { f.setVisible(show); f.setDisabled(!show); } }
+                if (row.id === 'source') {
+                    visible('header', value('source') === 'http_header'); visible('trusted-proxies', value('source') === 'proxy_protocol');
+                    visible('xff-position', value('source') === 'xff_dynamic'); visible('xff-index', value('source') === 'xff_dynamic');
+                }
+                if (row.id === 'host') visible('host-value', !!value('host-enable'));
+                if (row.id === 'hsts') ['hsts_max_age', 'hsts_sub', 'hsts_preload'].forEach(function (key) { visible(key, !!value('hsts')); });
             }
-            return changes;
+            function populate() {
+                let fields;
+                if (row.section === 'groups') fields = [input('enable', { xtype: 'checkbox', fieldLabel: '啟用分組管理', checked: data.values.enable })];
+                else if (row.id === 'source') {
+                    let xff = { position: 'from_end', index: 1 }; try { if (old('ip_source') === 'xff_dynamic') xff = Object.assign(xff, JSON.parse(old('ip_value'))); } catch (e) { /* Preserve until edited. */ }
+                    initialSource = { source: old('ip_source'), value: old('ip_value'), position: xff.position, index: xff.index };
+                    const choices = sources.slice(); if (!choices.some(function (r) { return r[0] === old('ip_source'); })) choices.push([old('ip_source'), '目前值：' + old('ip_source')]);
+                    fields = [input('source', Object.assign(combo('source', '源 IP 取得方式', old('ip_source'), choices), { allowBlank: false, forceSelection: true, listeners: { select: sync }, listConfig: { itemTpl: '{name:htmlEncode}' } })),
+                        input('xff-position', combo('xff-position', 'XFF 取得方向', xff.position, [['from_start', '從左往右'], ['from_end', '從右往左']])),
+                        input('xff-index', { xtype: 'numberfield', fieldLabel: 'IP 位置序號', value: xff.index, minValue: 1, maxValue: 100, allowDecimals: false, allowBlank: false }),
+                        input('header', Object.assign(combo('header', 'HTTP 標頭', old('ip_source') === 'http_header' ? old('ip_value') : 'X-Real-IP', [['X-Real-IP', 'X-Real-IP'], ['CF-Connecting-IP', 'CF-Connecting-IP'], ['True-Client-IP', 'True-Client-IP']]), { editable: true, allowBlank: false, maxLength: 256 })),
+                        input('trusted-proxies', { xtype: 'textareafield', fieldLabel: '信任的代理 IP／CIDR（每行一項）', value: old('ip_source') === 'proxy_protocol' ? old('ip_value').split(',').join('\n') : '', height: 90, maxLength: 4096 }),
+                        hint('XFF 位置從 1 開始；PROXY protocol 需與前置代理的設定一致。')];
+                } else if (row.id === 'hsts') fields = [check('hsts', '啟用 HSTS'),
+                    input('hsts_max_age', Object.assign(combo('hsts_max_age', '有效秒數', old('hsts_max_age'), [['15768000', '半年（15768000）'], ['31536000', '一年（31536000）'], ['63072000', '兩年（63072000）'], ['0', '0']]), { editable: true, allowBlank: false })), check('hsts_sub', '包含子域名'), check('hsts_preload', '預載')];
+                else if (row.id === 'host') fields = [check('host-enable', '修改請求中的 Host', !!old('host')), input('host-value', Object.assign(combo('host-value', 'Host', old('host') || '$http_host', [['$http_host', '原請求 Host（$http_host）'], ['$host', '解析後的主機名（$host）'], ['$proxy_host', '上游主機名（$proxy_host）']]), { editable: true, allowBlank: false, maxLength: 1024 }))];
+                else if (row.id === 'forwarded') fields = [check('forwarded', '啟用', !!(old('xfh') || old('xfp')))];
+                else if (row.id === 'ssl_protocols') fields = [input('ssl_protocols', Object.assign(combo('ssl_protocols', 'SSL／TLS 協定', old('ssl_protocols').split(/\s+/).filter(Boolean), [['TLSv1.2', 'TLSv1.2'], ['TLSv1.3', 'TLSv1.3'], ['TLSv1', 'TLSv1.0（舊版）'], ['TLSv1.1', 'TLSv1.1（舊版）'], ['SSLv2', 'SSLv2（舊版）'], ['SSLv3', 'SSLv3（舊版）']]), { xtype: 'tagfield', multiSelect: true, forceSelection: true, filterPickList: true, allowBlank: false }))];
+                else if (row.id === 'ssl_ciphers') fields = [input('ssl_ciphers', Object.assign(combo('ssl_ciphers', 'SSL Ciphers', old('ssl_ciphers'), [['', 'SafeLine 預設'], ['HIGH:!aNULL:!MD5', 'HIGH:!aNULL:!MD5']]), { editable: true, maxLength: 4096 })), hint('留空使用 SafeLine 預設密碼套件。')];
+                else if (row.id === 'http_headers') fields = [advancedHeaders(old('http_headers'), false), hint('敏感標頭的現有值不回填：留空保留，填入新值替換。刪除動作無需填寫值。')];
+                else fields = [check(row.id, '啟用')].concat(row.id === 'force_https' ? [hint('需要應用同時監聽 HTTP 與 HTTPS 端口。')] : []);
+                const container = dialog.down('#safeline-advanced-edit-fields'); container.removeAll(true); fields.forEach(function (config) { container.add(config); }); sync();
+            }
+            function changes() {
+                const patch = {};
+                function put(key, next, global) { if (row.keys.includes(key) && JSON.stringify(old(key)) !== JSON.stringify(next)) patch[key] = { global: global == null ? data.values[key].global : global, value: next }; }
+                if (row.section === 'groups') return value('enable') === data.values.enable ? {} : { enable: !!value('enable') };
+                if (row.id === 'source') {
+                    const source = value('source'); let next = '';
+                    if (source === 'http_header') next = String(value('header') || '').trim();
+                    if (source === 'proxy_protocol') next = String(value('trusted-proxies') || '').split(/[\r\n,]+/).map(function (v) { return v.trim(); }).filter(Boolean).join(',');
+                    if (source === 'xff_dynamic') next = JSON.stringify({ position: value('xff-position'), index: value('xff-index') });
+                    const changed = source !== initialSource.source || source === 'http_header' && next !== initialSource.value || source === 'proxy_protocol' && next !== initialSource.value || source === 'xff_dynamic' && (value('xff-position') !== initialSource.position || Number(value('xff-index')) !== Number(initialSource.index));
+                    if (changed) { patch.ip_source = { global: false, value: source }; patch.ip_value = { global: false, value: next }; }
+                } else if (row.id === 'hsts') {
+                    ['hsts', 'hsts_sub', 'hsts_preload'].forEach(function (key) { put(key, !!value(key), true); }); put('hsts_max_age', String(value('hsts_max_age')).trim());
+                } else if (row.id === 'host') put('host', value('host-enable') ? String(value('host-value') || '').trim() : '', true);
+                else if (row.id === 'forwarded') { if (!!value('forwarded') !== !!(old('xfp') || old('xfh'))) { put('xfp', value('forwarded') ? '$scheme' : '', true); put('xfh', value('forwarded') ? '$http_host' : '', true); } }
+                else if (row.id === 'ssl_protocols') { const next = (value('ssl_protocols') || []).slice().sort().join(' '); if (old('ssl_protocols').split(/\s+/).filter(Boolean).sort().join(' ') !== next) put('ssl_protocols', next); }
+                else if (row.id === 'ssl_ciphers') put('ssl_ciphers', String(value('ssl_ciphers') || '').trim());
+                else if (row.id === 'http_headers') {
+                    const table = dialog.down('#safeline-advanced-headers'), headers = [];
+                    table.getPlugins().forEach(function (plugin) { if (typeof plugin.completeEdit === 'function') plugin.completeEdit(); });
+                    table.getStore().each(function (record) { const r = record.data, item = { target: r.target, op: r.op, key: r.key, val: r.op === 'del' ? '' : r.val }; if (r.keep != null && !r.val && r.op !== 'del') item.keep = r.keep; headers.push(item); }); put('http_headers', headers);
+                } else put(row.id, !!value(row.id), true);
+                return patch;
+            }
+            function saving(busy) { pending = busy; dialog.down('#safeline-advanced-close').setDisabled(busy); const form = dialog.down('form'); if (typeof form.setLoading === 'function') form.setLoading(busy ? '正在儲存…' : false); }
+            function save() {
+                if (pending || !data || !operation || !alive(dialog) || !current(state, generation, who) || dialog.down('#safeline-advanced-save').disabled) return;
+                if (!dialog.down('form').getForm().isValid()) { notice('請檢查標記的欄位。'); return; }
+                let patch; try { patch = changes(); } catch (e) { notice('請檢查尚未完成的 Header 編輯。'); return; }
+                if (!Object.keys(patch).length) { notice('設定未變更'); return; }
+                saving(true); dialog.down('#safeline-advanced-save').setDisabled(true); notice('正在儲存並核對設定…');
+                request(state, paths[row.section], { method: 'PUT', headers: { 'X-PVE-Plugins-CSRF': state.connection.csrf_token }, jsonData: { expected_revision: data.connection_revision, fingerprint: data.fingerprint, operation_id: operation, changes: patch } }, function (result) {
+                    if (!alive(dialog)) return; saving(false);
+                    if (result.outcome === 'confirmed') { dialog.destroy(); status(state, '高級配置已儲存並確認'); load(row.section); return; }
+                    notice(message(result.outcome === 'failed' ? result.code : 'safeline_write_unknown'));
+                    if (result.outcome === 'failed') { operation = uuid(); dialog.down('#safeline-advanced-save').setDisabled(!operation); }
+                }, function (code) {
+                    if (!alive(dialog)) return; saving(false);
+                    notice(message(code.startsWith('invalid_') || ['safeline_resource_changed', 'safeline_feature_unavailable', 'safeline_edit_unsupported', 'safeline_operation_conflict', 'safeline_operation_pending'].includes(code) ? code : 'safeline_write_unknown'));
+                    if (code.startsWith('invalid_')) dialog.down('#safeline-advanced-save').setDisabled(false);
+                }, false);
+            }
+            dialog = Ext.create('Ext.window.Window', { title: '編輯：' + row.name, width: row.id === 'http_headers' ? 820 : 620, maxHeight: 650, modal: true, constrain: true, closeAction: 'destroy', layout: 'fit', scrollable: true,
+                items: [{ xtype: 'form', border: false, bodyPadding: 16, items: [{ xtype: 'container', itemId: 'safeline-advanced-edit-fields', layout: 'anchor', defaults: { anchor: '100%', labelWidth: 160 } }, { xtype: 'component', itemId: 'safeline-advanced-edit-status', margin: '8 0 0', html: '正在讀取最新設定…' }] }],
+                buttons: [{ text: '儲存', itemId: 'safeline-advanced-save', disabled: true, handler: save }, { text: '關閉', itemId: 'safeline-advanced-close', handler: function () { dialog.close(); } }],
+                listeners: { beforeclose: function () { return !pending; }, destroy: function () { if (state.editor === dialog) state.editor = null; if (editor === dialog) editor = null; updateEdit(); } } });
+            editor = dialog; state.editor = dialog; updateEdit(); dialog.show();
+            request(state, paths[row.section], {}, function (result) {
+                if (!alive(dialog) || !alive(panel)) return;
+                if (!valid(result)) { notice(message('safeline_unexpected_response')); return; }
+                loaded[row.section] = result; messages[row.section] = ''; rebuild();
+                if (!editable(row, result)) { notice(message(!result.capabilities.premium ? 'safeline_feature_unavailable' : 'safeline_edit_unsupported')); return; }
+                data = result; populate(); notice(operation ? '全域應用預設；個別應用的自訂值優先。' : '此瀏覽器無法產生操作編號，暫時無法儲存。'); dialog.down('#safeline-advanced-save').setDisabled(!operation);
+            }, function (code) { notice(message(code)); }, false);
         }
-        function load(section){
-            if(pending[section])return;loaded[section]=null;saveButton(section).setDisabled(true);notice(section,'正在讀取最新設定…');
-            request(state,paths[section],{},function(data){
-                if(!alive(panel))return;
-                if(!data.values||!Array.isArray(data.locked)||!data.capabilities||typeof data.fingerprint!=='string'){notice(section,message('safeline_unexpected_response'));return;}
-                loaded[section]=data;operations[section]=uuid();
-                if(section==='proxy')populateProxy(data);
-                else {const form=panel.down('#safeline-advanced-groups-fields');form.removeAll(true);form.add(input('enable',{xtype:'checkbox',fieldLabel:'啟用分組管理',checked:!!data.values.enable,disabled:data.locked.includes('enable')}));form.add(hint(data.capabilities.premium?'此開關控制 SafeLine 應用分組功能。':'分組管理需 SafeLine 專業版或商業版授權。'));}
-                saveButton(section).setDisabled(!operations[section]||section==='groups'&&data.locked.includes('enable'));notice(section,'已讀取 · '+date(data.updated_at));
-            },function(code){notice(section,message(code));},true);
-        }
-        function save(section){
-            if(!current(state,generation,who)||!alive(panel)||!loaded[section]||pending[section]||!operations[section])return;
-            const form=panel.down('#safeline-advanced-'+section+'-form');if(!form.getForm().isValid()){notice(section,'請檢查標記的欄位。');return;}
-            let changes;try{changes=section==='proxy'?readProxy():value('enable')!==loaded.groups.values.enable?{enable:!!value('enable')}:{};}catch(e){notice(section,'請檢查表單及尚未完成的 Header 編輯。');return;}
-            if(!Object.keys(changes).length){notice(section,'設定未變更');return;}
-            saving(section,true);saveButton(section).setDisabled(true);notice(section,'正在儲存並核對設定…');
-            request(state,paths[section],{method:'PUT',headers:{'X-PVE-Plugins-CSRF':state.connection.csrf_token},jsonData:{expected_revision:loaded[section].connection_revision,fingerprint:loaded[section].fingerprint,operation_id:operations[section],changes:changes}},function(data){
-                if(!alive(panel))return;saving(section,false);
-                if(data.outcome==='confirmed'){status(state,'高級配置已儲存並確認');load(section);return;}
-                notice(section,message(data.outcome==='failed'?data.code:'safeline_write_unknown'));
-                if(data.outcome==='failed'){operations[section]=uuid();saveButton(section).setDisabled(!operations[section]);}
-            },function(code){if(!alive(panel))return;saving(section,false);notice(section,message(code.startsWith('invalid_')||['safeline_resource_changed','safeline_feature_unavailable','safeline_edit_unsupported','safeline_operation_conflict','safeline_operation_pending'].includes(code)?code:'safeline_write_unknown'));if(code.startsWith('invalid_'))saveButton(section).setDisabled(false);},true);
-        }
-        show(state,{xtype:'panel',itemId:'safeline-advanced',border:false,scrollable:'y',bodyPadding:16,tbar:[{itemId:'safeline-advanced-save-proxy',text:'儲存高級配置',iconCls:'fa fa-save',disabled:true,handler:function(){save('proxy');}},{text:'重新載入',tooltip:'放棄此區未儲存的修改，重新讀取 SafeLine 設定',handler:function(){load('proxy');}}],items:[hint('全域應用預設；套用於沿用全域設定的應用。單一應用的自訂值繼續優先生效。'),
-            {xtype:'component',itemId:'safeline-advanced-status-proxy',margin:'0 0 12 0',html:''},
-            {xtype:'form',itemId:'safeline-advanced-proxy-form',border:false,maxWidth:1100,layout:'anchor',items:[{xtype:'container',itemId:'safeline-advanced-proxy-fields',layout:'anchor'}]},
-            {xtype:'component',itemId:'safeline-advanced-status-groups',margin:'12 0',html:''},
-            {xtype:'form',itemId:'safeline-advanced-groups-form',title:'分組管理',border:true,bodyPadding:14,maxWidth:1100,defaults:{anchor:'100%',labelWidth:265},items:[{xtype:'container',itemId:'safeline-advanced-groups-fields',layout:'anchor',defaults:{anchor:'100%',labelWidth:265}}],buttons:[{itemId:'safeline-advanced-save-groups',text:'儲存分組設定',disabled:true,handler:function(){save('groups');}},{text:'重新載入',handler:function(){load('groups');}}]}]});
-        panel=state.page.down('#safeline-advanced');panel.reloadAdvanced=function(){load('proxy');load('groups');};panel.reloadAdvanced();
+        show(state, { xtype: 'grid', itemId: 'safeline-advanced', border: false, store: { fields: ['id', 'name', 'value'], data: [] },
+            columns: [{ text: '項目', dataIndex: 'name', width: 290, renderer: enc }, { text: '值', dataIndex: 'value', flex: 1, renderer: enc }],
+            tbar: [{ text: '編輯', iconCls: 'fa fa-pencil', itemId: 'safeline-advanced-edit', disabled: true, handler: function () { edit(selected()); } }, { text: '重新載入', iconCls: 'fa fa-refresh', itemId: 'safeline-advanced-reload', handler: function () { panel.reloadAdvanced(); } }, { xtype: 'tbtext', itemId: 'safeline-advanced-status', text: '正在讀取…' }],
+            bbar: [{ xtype: 'tbtext', text: '雙擊設定行可編輯。全域應用預設；個別應用的自訂值優先。' }],
+            viewConfig: { stripeRows: true }, listeners: { selectionchange: updateEdit, itemdblclick: function (view, record) { edit(rows.find(function (r) { return r.id === record.get('id'); })); }, beforedestroy: function () { if (alive(editor)) editor.destroy(); } } });
+        panel = state.page.down('#safeline-advanced'); panel.reloadAdvanced = function () { if (!alive(editor)) { load('proxy'); load('groups'); } }; panel.reloadAdvanced();
     }
     function conditionGrid(pattern) {
         const values = [], fields = [['src_ip', '來源 IP'], ['website', '防護應用 ID'], ['host', 'Host'], ['uri', 'URI'], ['uri_no_query', '不含參數的 URI'],
