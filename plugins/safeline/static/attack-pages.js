@@ -33,7 +33,12 @@
             window.open((fingerprint ? 'https://intelligence.app.cyberserval.tech/?search=' : 'https://rivers.chaitin.cn/ip-intelligence?search=') + encodeURIComponent(value), '_blank', 'noopener,noreferrer');
         }
         function combo(name, label, value, options) { return Object.assign(ctx.combo(name, label, value, options), { forceSelection: true }); }
-        function stop() { if (state.logTimer) window.clearTimeout(state.logTimer); state.logTimer = null; state.logSerial = (state.logSerial || 0) + 1; }
+        function cellText(value, meta) { if (meta) meta.tdAttr = 'title="' + enc(value) + '"'; return enc(value); }
+        function stop() {
+            if (state.logTimer) window.clearTimeout(state.logTimer);
+            if (state.logFitTimer) window.clearTimeout(state.logFitTimer);
+            state.logTimer = null; state.logFitTimer = null; state.logSerial = (state.logSerial || 0) + 1;
+        }
         function closeEditor() { if (alive(state.editor)) state.editor.destroy(); state.editor = null; }
 
         function addIp(ip) {
@@ -169,7 +174,8 @@
                 if (!port || port > 65535) { ctx.note('無法核對此應用的監聽端口，請在攻擊防護頁依實際 Host／端口查詢。'); return; }
                 state.logFilters.host = context.domains[0]; state.logFilters.port = String(port);
             }
-            const filters = state.logFilters || {}, size = state.logPageSize || 20, params = { page: state.logPage, page_size: size, source: source };
+            const mode = events ? 'events' : 'records', fitted = state.logFittedSizes || (state.logFittedSizes = {});
+            const filters = state.logFilters || {}, size = state.logPageSize || fitted[mode] || 20, params = { page: state.logPage, page_size: size, source: source };
             Object.keys(filters).forEach(function (key) { if (filters[key] != null && filters[key] !== '') params[key] = filters[key]; });
             if (policy) params.policy_rule_id = context.id;
             if (state.logHours && params.start == null && params.end == null) { params.end = Date.now(); params.start = params.end - state.logHours * 3600000; }
@@ -177,20 +183,43 @@
             ctx.request('/' + (events ? 'events' : 'records') + '?' + new URLSearchParams(params).toString(), {}, function (data) {
                 if (serial !== state.logSerial) return;
                 if (data.connection_revision !== state.connection.revision || !Array.isArray(data.items) || !Number.isSafeInteger(data.total) || data.total < 0) { ctx.note('日誌資料已變更或格式不符，請刷新。'); return; }
-                const ip = { text: '來源 IP', dataIndex: events ? 'ip' : 'src_ip', width: 165 }, icon = { text: 'IP 畫像', dataIndex: 'ip_portrait', width: 78, minWidth: 65, align: 'center', renderer: function (v, meta, r) { return (events ? r.data.ip : r.data.src_ip) ? '<span class="fa fa-external-link" role="img" aria-label="雙擊查看 IP 畫像"></span>' : '—'; } },
-                    location = { text: '來源 IP 屬地', dataIndex: 'geography', width: 155, renderer: function (v, m, r) { return enc(geo(r.data)); } },
-                    host = { text: events ? '應用' : 'HOST', dataIndex: 'host', flex: 1, minWidth: 175 };
+                const ip = { text: '來源 IP', dataIndex: events ? 'ip' : 'src_ip', width: 300, renderer: cellText }, icon = { text: 'IP 畫像', dataIndex: 'ip_portrait', width: 78, minWidth: 65, align: 'center', renderer: function (v, meta, r) { return (events ? r.data.ip : r.data.src_ip) ? '<span class="fa fa-external-link" role="img" aria-label="雙擊查看 IP 畫像"></span>' : '—'; } },
+                    location = { text: '來源 IP 屬地', dataIndex: 'geography', width: 250, renderer: function (v, m, r) { return cellText(geo(r.data), m); } },
+                    host = { text: events ? '應用' : 'HOST', dataIndex: 'host', width: 240, renderer: cellText };
                 const columns = events ? [ip, icon, location, host,
                     { text: '放行攻擊', dataIndex: 'pass_count', width: 100, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
                     { text: '攔截攻擊', dataIndex: 'deny_count', width: 100, align: 'right', renderer: function (v) { return enc(ctx.amount(v)); } },
                     { text: '持續時間', dataIndex: 'duration', width: 120, renderer: function (v, m, r) { return enc(duration(r.data)); } },
-                    { text: '開始時間', dataIndex: 'start_at', width: 180, renderer: function (v) { return enc(ctx.date(v, true)); } },
-                    { text: '結束時間', dataIndex: 'end_at', width: 180, renderer: function (v) { return enc(ctx.date(v, true)); } }]
+                    { text: '開始時間', dataIndex: 'start_at', flex: 1, minWidth: 180, maxWidth: 240, renderer: function (v) { return enc(ctx.date(v, true)); } },
+                    { text: '結束時間', dataIndex: 'end_at', flex: 1, minWidth: 180, maxWidth: 240, renderer: function (v) { return enc(ctx.date(v, true)); } }]
                     : [{ text: '時間', dataIndex: 'timestamp', width: 180, renderer: function (v) { return enc(ctx.date(v)); } },
                         { text: '動作', dataIndex: 'action', width: 80, renderer: function (v) { return enc(action(v)); } }, ip, icon, location, host,
-                        { text: '路徑', dataIndex: 'url_path', flex: 1, minWidth: 180 }, { text: '攻擊類型', dataIndex: 'attack_type', width: 130, renderer: function (v) { return enc(attack(v)); } }];
+                        { text: '路徑', dataIndex: 'url_path', flex: 1, minWidth: 200, renderer: cellText }, { text: '攻擊類型', dataIndex: 'attack_type', width: 130, renderer: function (v) { return enc(attack(v)); } }];
                 if (!events && data.module_in_list !== false) columns.push({ text: '命中防護模組', dataIndex: 'module', width: 190, renderer: function (v) { return enc(moduleName(v)); } });
                 let panel, table;
+                function scheduleFit() {
+                    if (serial !== state.logSerial || !alive(table)) return;
+                    if (state.logFitTimer) window.clearTimeout(state.logFitTimer);
+                    state.logFitTimer = null;
+                    if (state.logPageSize) return;
+                    state.logFitTimer = window.setTimeout(function () {
+                        state.logFitTimer = null;
+                        if (!alive(table) || serial !== state.logSerial || !ctx.user() || state.logPageSize || typeof table.getView !== 'function') return;
+                        if (panel.down('#safeline-attack-filters').getForm().isDirty()) return;
+                        const view = table.getView(), element = view.getEl(), node = view.getNode(0);
+                        const height = element && element.dom.clientHeight;
+                        const rowHeight = node ? node.getBoundingClientRect().height : state.logRowHeight || 25;
+                        if (!(height > 0) || !(rowHeight > 0)) return;
+                        state.logRowHeight = rowHeight;
+                        // Keep complete rows inside the measured body, including its table border.
+                        const next = Math.max(1, Math.min(100, Math.floor((height - 1) / rowHeight)));
+                        fitted[mode] = next;
+                        if (next === size) return;
+                        const first = (state.logPage - 1) * size;
+                        state.logPage = Math.min(Math.max(1, Math.floor(first / next) + 1), Math.max(1, Math.ceil(data.total / next)));
+                        render(context);
+                    }, 120);
+                }
                 function apply() {
                     const form = panel.down('#safeline-attack-filters'); if (!form.getForm().isValid()) return;
                     const next = {}, value = function (name) { return form.down('[name=' + name + ']').getValue(); };
@@ -205,11 +234,13 @@
                 }
                 const config = ctx.grid(data.items, columns); config.itemId = 'safeline-attack-grid'; config.region = 'center';
                 config.tbar = null;
-                config.listeners = { celldblclick: function (view, td, index, record) { cell(table, index, record, events, context, source); } };
+                config.listeners = { celldblclick: function (view, td, index, record) { cell(table, index, record, events, context, source); },
+                    afterlayout: scheduleFit, resize: scheduleFit, columnresize: scheduleFit, columnhide: scheduleFit, columnshow: scheduleFit };
                 config.bbar = [{ text: '上一頁', disabled: state.logPage <= 1, handler: function () { state.logPage--; render(context); } },
                     { xtype: 'tbtext', text: enc('第 ' + state.logPage + ' 頁 · 共 ' + data.total + ' 筆') },
                     { text: '下一頁', disabled: state.logPage * size >= data.total, handler: function () { state.logPage++; render(context); } }, '->',
-                    Object.assign(combo('page_size', '', size, [[20, '20 筆／頁'], [50, '50 筆／頁'], [100, '100 筆／頁']]), { width: 110, listeners: { select: function (f) { state.logPageSize = f.getValue(); state.logPage = 1; render(context); } } })];
+                    Object.assign(combo('page_size', '', state.logPageSize || 0, [[0, '自動（' + size + ' 筆／頁）'], [20, '20 筆／頁'], [50, '50 筆／頁'], [100, '100 筆／頁']]), { width: 160,
+                        listeners: { select: function (f) { state.logPageSize = Number(f.getValue()) || 0; state.logPage = 1; render(context); } } })];
                 const tools = [];
                 if (!context) tools.push({ text: '攻擊事件', enableToggle: true, pressed: events, handler: function () { state.logMode = 'events'; state.logPage = 1; state.logFilters = {}; state.logRelated = false; render(context); } },
                     { text: '攻擊日誌', enableToggle: true, pressed: !events, handler: function () { state.logMode = 'records'; state.logPage = 1; state.logFilters = {}; state.logRelated = false; render(context); } });
@@ -219,7 +250,11 @@
                     items: [{ xtype: 'panel', region: 'north', border: false, layout: 'anchor', tbar: { enableOverflow: true, items: tools },
                         items: [filterForm(events, filters, apply)] }, config],
                     bbar: [{ xtype: 'tbtext', itemId: 'safeline-attack-status', text: enc(state.logRelated ? '已按事件來源、Host、端口、起訖時間及動作篩選' : events ? '雙擊來源 IP 加入 IP 組；雙擊攻擊次數查看日誌' : '雙擊來源 IP 加入 IP 組；雙擊其他欄位查看詳情') }],
-                    listeners: { destroy: function () { if (state.logTimer) window.clearTimeout(state.logTimer); state.logTimer = null; } } });
+                    listeners: { destroy: function () {
+                        if (state.logTimer) window.clearTimeout(state.logTimer);
+                        if (state.logFitTimer) window.clearTimeout(state.logFitTimer);
+                        state.logTimer = null; state.logFitTimer = null;
+                    } } });
                 panel = state.page.down('#safeline-attacks'); table = panel.down('#safeline-attack-grid');
                 function arm() {
                     if (!state.logAutoRefresh || !alive(panel)) return;
@@ -232,6 +267,7 @@
                 }
                 // Field changes are intentional user edits; establish the auto-refresh baseline now.
                 panel.down('#safeline-attack-filters').getForm().trackResetOnLoad = true;
+                scheduleFit();
                 arm();
             }, function (code) { if (serial === state.logSerial) ctx.note(ctx.message(code)); }, true);
         }

@@ -240,8 +240,66 @@ function attackPage(b, state, mode = 'events', rows = [], extra = {}) {
 function doubleCell(table, key) {
     table.fire('celldblclick', {}, {}, table.columns.filter(c => !c.hidden).findIndex(c => c.dataIndex === key), table.getStore().rows[0]);
 }
+function fitAttackTable(b, state, table, height, rowHeight = 25) {
+    table.getView = () => ({ getEl: () => ({ dom: { clientHeight: height } }), getNode: () => ({ getBoundingClientRect: () => ({ height: rowHeight }) }) });
+    table.fire('resize'); const timer = state.logFitTimer;
+    if (timer) { b.timers.delete(timer); timer.fn(); }
+}
+function replyAttackQuery(b, state, items = [attackRecord], total = 200) {
+    const request = b.requests.at(-1); b.reply(request.options.url.slice(base.length), { items, total, connection_revision: 1 }, 200, request);
+    return state.page.down('#safeline-attack-grid');
+}
 const attackEvent = { id: 162, ip: '2001:db8::1', host: 'app.example', dst_port: 443, start_at: 1792185285000, end_at: 1792185420007, pass_count: 15, deny_count: 2, country: 'CN', province: '福建省', city: '廈門市' };
 const attackRecord = { event_id: 'log-id', src_ip: '2001:db8::1', host: 'app.example', url_path: '/login', timestamp: 1792185349, attack_type: 8, action: 0, module: 'm_php_code_injection', ja4_fingerprint: 't13_fingerprint' };
+
+test('automatic page size fits complete visible rows and resize retains the current result range', () => {
+    const b = browser(), state = b.enter(); let { table } = attackPage(b, state, 'records', [attackRecord], { total: 200 });
+    fitAttackTable(b, state, table, 651);
+    let params = new URL('http://test.local' + b.requests.at(-1).options.url).searchParams;
+    assert.equal(params.get('page_size'), '26'); assert.equal(params.get('page'), '1');
+    table = replyAttackQuery(b, state); const count = b.requests.length;
+    fitAttackTable(b, state, table, 651); assert.equal(b.requests.length, count, 'stable layout does not refetch');
+    table.bbar.find(c => c.text === '下一頁').handler(); table = replyAttackQuery(b, state);
+    fitAttackTable(b, state, table, 351);
+    params = new URL('http://test.local' + b.requests.at(-1).options.url).searchParams;
+    assert.equal(params.get('page_size'), '14'); assert.equal(params.get('page'), '2', 'the former first result remains in the new page');
+});
+
+test('manual page sizes override fitting and switching back to automatic measures the current body', () => {
+    const b = browser(), state = b.enter(); let { table } = attackPage(b, state, 'records', [attackRecord], { total: 200 });
+    let picker = table.down('[name=page_size]'); picker.value = 50; picker.fire('select', picker);
+    assert.equal(new URL('http://test.local' + b.requests.at(-1).options.url).searchParams.get('page_size'), '50');
+    table = replyAttackQuery(b, state); const count = b.requests.length;
+    fitAttackTable(b, state, table, 351); assert.equal(b.requests.length, count); assert.equal(state.logFitTimer, null);
+    picker = table.down('[name=page_size]'); picker.value = 0; picker.fire('select', picker);
+    table = replyAttackQuery(b, state); fitAttackTable(b, state, table, 851);
+    assert.equal(new URL('http://test.local' + b.requests.at(-1).options.url).searchParams.get('page_size'), '34');
+});
+
+test('automatic sizing protects filter drafts, respects the API limit and cancels on navigation', () => {
+    const b = browser(), state = b.enter(), { table, form } = attackPage(b, state, 'records', [attackRecord], { total: 200 });
+    form.down('[name=host]').value = 'draft.example'; form.dirty = true; const count = b.requests.length;
+    fitAttackTable(b, state, table, 5001); assert.equal(b.requests.length, count); assert.equal(form.down('[name=host]').value, 'draft.example');
+    form.dirty = false; fitAttackTable(b, state, table, 5001);
+    assert.equal(new URL('http://test.local' + b.requests.at(-1).options.url).searchParams.get('page_size'), '100');
+    replyAttackQuery(b, state); const pending = state.logFitTimer;
+    const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById('policies'));
+    assert.equal(state.logFitTimer, null); assert.ok(!b.timers.has(pending));
+});
+
+test('event and log auto sizes use their own available height and retain server filters', () => {
+    const b = browser(), state = b.enter(); let { table } = attackPage(b, state, 'events', [attackEvent], { total: 200 });
+    fitAttackTable(b, state, table, 751); table = replyAttackQuery(b, state, [attackEvent]);
+    const panel = state.page.down('#safeline-attacks'); panel.children[0].tbar.items.find(c => c.text === '攻擊日誌').handler();
+    assert.equal(new URL('http://test.local' + b.requests.at(-1).options.url).searchParams.get('page_size'), '20');
+    table = replyAttackQuery(b, state);
+    const form = state.page.down('#safeline-attack-filters'); form.down('[name=ip]').value = '192.0.2.3'; form.down('[name=action]').value = '1';
+    state.page.down('#safeline-attacks').children[0].tbar.items.find(c => c.text === '篩選／刷新').handler(); table = replyAttackQuery(b, state);
+    fitAttackTable(b, state, table, 601);
+    const params = new URL('http://test.local' + b.requests.at(-1).options.url).searchParams;
+    assert.equal(params.get('page_size'), '24'); assert.equal(params.get('ip'), '192.0.2.3'); assert.equal(params.get('action'), '1');
+    assert.equal(state.logFittedSizes.events, 30);
+});
 
 test('attack pages expose inline filters, validate date boundaries and submit JA4/type/action fields', () => {
     const b = browser(), state = b.enter(), { panel, form } = attackPage(b, state, 'records');
