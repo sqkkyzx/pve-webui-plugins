@@ -82,6 +82,17 @@ def application(value):
             listeners.append({"port": int(match[1]), "tls": bool(match[2])})
     result = take(value, ("id", "comment", "is_enabled", "mode", "cert_id", "created_at", "updated_at", "health_check",
                           "semantics", "challenge_is_enabled", "chaos_is_enabled", "acl_enabled", "stat_enabled", "sp_enabled"))
+    # Match the console's four protection badges. Existing policy IDs do not
+    # imply BOT protection is active: disabled policies retain their IDs.
+    challenge, chaos = value.get("challenge_is_enabled"), value.get("chaos_is_enabled")
+    auth = value.get("auth_defense_id")
+    result.update({"cc_enabled": value.get("cc_bot") if type(value.get("cc_bot")) is bool else None,
+                   "bot_enabled": True if challenge is True or chaos is True else False if challenge is False and chaos is False else None,
+                   "auth_enabled": auth > 0 if type(auth) is int and auth >= 0 else None,
+                   "attack_enabled": value.get("semantics") if type(value.get("semantics")) is bool else None})
+    for key in ("req_value", "denied_value"):
+        count = number(value.get(key))
+        result[key] = count if count is not None and count >= 0 else None
     result.update({"id": str(value["id"]), "kind": "applications", "status": status,
                    "name": text(value.get("title")) or ", ".join(value.get("server_names") or []) or "應用 #" + str(value["id"]),
                    "domains": value.get("server_names") or [], "ports": value.get("ports") or [],

@@ -30,7 +30,10 @@ def waf_handler(state):
         path = request.url.path
         site = {"id": 12, "title": "<script>app</script>", "server_names": ["app.example"], "ports": ["443"],
                 "upstreams": ["https://backend:8443"], "is_enabled": True, "mode": 0, "cert_id": 5,
-                "health_check": True, "health_state": {"https://backend:8443": {"state": 2, "error": ""}}}
+                "health_check": True, "health_state": {"https://backend:8443": {"state": 2, "error": ""}},
+                "comment": "Management", "req_value": 54400, "denied_value": 1729, "cc_bot": True, "acl_enabled": False,
+                "challenge_id": 18, "challenge_is_enabled": False, "chaos_id": 17, "chaos_is_enabled": False,
+                "auth_defense_id": 9, "semantics": True}
         policies = [{"id": i+1, "action": i, "name": "rule-"+str(i), "is_enabled": i != 1, "expire": 0,
                      "pattern": [[{"k": "header", "sub_k": "Authorization", "op": "eq", "v": ["private-header"]}]],
                      "private_key": "never-return-this"} for i in range(3)]
@@ -171,6 +174,42 @@ def test_inventory_classification_cert_references_and_unknown_metrics(integrated
     assert stats["sections"]["access"]["access"] == 0
     assert stats["sections"]["access"]["pv"] is None
     assert stats["sections"]["attack"]["intercept"]["challenge"] is None
+
+
+def test_application_inventory_includes_console_card_metrics_without_extra_requests(integrated):
+    client, state, _, _ = integrated
+    configure(client)
+    inv = client.get(BASE + "/inventory", headers={"cookie": COOKIE}).json()
+    app = inv["resources"]["applications"][0]
+    assert (app["comment"], app["req_value"], app["denied_value"]) == ("Management", 54400, 1729)
+    assert {k: app[k] for k in ("cc_enabled", "bot_enabled", "auth_enabled", "attack_enabled")} == {
+        "cc_enabled": True, "bot_enabled": False, "auth_enabled": True, "attack_enabled": True}
+    assert sorted(request.url.path for request in state["waf"]) == ["/api/open/cert", "/api/open/ipgroup", "/api/open/policy", "/api/open/site"]
+
+
+@pytest.mark.parametrize("fields,expected", [
+    ({"cc_bot": True, "acl_enabled": False, "challenge_is_enabled": False, "chaos_is_enabled": False,
+      "auth_defense_id": 9, "semantics": True}, (True, False, True, True)),
+    ({"cc_bot": False, "acl_enabled": True, "challenge_id": 18, "chaos_id": 17,
+      "challenge_is_enabled": False, "chaos_is_enabled": False, "auth_defense_id": 0, "semantics": False}, (False, False, False, False)),
+    ({"challenge_is_enabled": True}, (None, True, None, None)),
+    ({"chaos_is_enabled": True}, (None, True, None, None)),
+    ({"challenge_is_enabled": False}, (None, None, None, None)),
+    ({}, (None, None, None, None)),
+    ({"cc_bot": 1, "challenge_is_enabled": "true", "chaos_is_enabled": False,
+      "auth_defense_id": True, "semantics": "true"}, (None, None, None, None)),
+    ({"auth_defense_id": -1}, (None, None, None, None)),
+])
+def test_application_protection_states_match_active_console_badges(fields, expected):
+    app = application({"id": 1, **fields})
+    assert tuple(app[k] for k in ("cc_enabled", "bot_enabled", "auth_enabled", "attack_enabled")) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [(0, 0), (1729, 1729), (-1, None), ("1729", None), (None, None),
+                                          (float("nan"), None), (float("inf"), None), (True, None)])
+def test_application_counts_preserve_zero_and_do_not_invent_missing_metrics(raw, expected):
+    app = application({"id": 1, "req_value": raw, "denied_value": raw})
+    assert app["req_value"] == app["denied_value"] == expected
 
 
 def test_overview_uses_verified_seconds_and_console_preset(integrated):

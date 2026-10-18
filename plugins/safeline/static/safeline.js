@@ -175,11 +175,25 @@
         if (node && node.parentNode && typeof node.parentNode.expand === 'function') node.parentNode.expand();
         renderSelection(state);
     }
-    function resourceColumns(kind) {
+    function switchMark(value, metadata, record) {
+        if (record && record.data.stale || typeof value !== 'boolean') return '<span aria-label="狀態未知">—</span>';
+        return value ? '<span class="fa fa-check" role="img" aria-label="啟用"></span>' : '<span role="img" aria-label="停用"></span>';
+    }
+    function resourceColumns(kind, compact) {
         const name = { text: '名稱', dataIndex: 'name', flex: 2, minWidth: 180 };
         const statusColumn = { text: '狀態', width: 125, renderer: function (v, m, r) { return enc(r.data.stale ? '資料已過期' : r.data.status.label); } };
-        if (kind === 'applications') return [name, statusColumn, { text: '域名', dataIndex: 'domains', flex: 2, renderer: function (v) { return enc((v || []).join(', ')); } },
-            { text: '監聽', dataIndex: 'ports', width: 130, renderer: function (v) { return enc((v || []).map(portLabel).join(', ')); } }];
+        if (kind === 'applications') {
+            const columns = [name, statusColumn, { text: '域名', dataIndex: 'domains', flex: 2, minWidth: 180, renderer: function (v) { return enc((v || []).join(', ')); } },
+                { text: '監聽', dataIndex: 'ports', width: 115, renderer: function (v) { return enc((v || []).map(portLabel).join(', ')); } }];
+            if (compact) return columns;
+            columns.splice(1, 0, { text: '說明', dataIndex: 'comment', flex: 2, minWidth: 180 });
+            function count(v, m, r) { return r.data.stale || typeof v !== 'number' || !Number.isFinite(v) || v < 0 ? '—' : enc(amount(v)); }
+            return columns.concat([{ text: '今日請求', dataIndex: 'req_value', width: 110, align: 'right', renderer: count },
+                { text: '今日攔截', dataIndex: 'denied_value', width: 110, align: 'right', renderer: count }],
+                [['cc_enabled', 'CC 防護'], ['bot_enabled', 'BOT 防護'], ['auth_enabled', '身份認證'], ['attack_enabled', '攻擊防護']].map(function (item) {
+                    return { text: item[1], dataIndex: item[0], width: 85, align: 'center', renderer: switchMark };
+                }));
+        }
         if (kind === 'certificates') return [name, statusColumn, { text: '簽發者', dataIndex: 'issuer', flex: 1 }, { text: '到期', dataIndex: 'valid_before', width: 175, renderer: date }];
         if (kind === 'ip-groups') return [name, { text: '成員數', dataIndex: 'total', width: 95 }, { text: '內建', dataIndex: 'builtin', width: 85, renderer: function (v) { return enc(readable(v)); } },
             { text: '更新時間', dataIndex: 'updated_at', width: 180, renderer: date }];
@@ -348,7 +362,7 @@
                     renderOverview(state);
                     const next=component.getEl().down('button[data-safeline-geo-'+(region?'region':'mode')+'="'+(region||mode)+'"]');if(next)next.focus();
                 });}}},
-                Object.assign(grid([],resourceColumns('applications'),function(r){choose(state,r.kind,r.id);}),{itemId:'safeline-overview-attention',title:'資源提醒',hidden:true,height:180,margin:12,
+                Object.assign(grid([],resourceColumns('applications',true),function(r){choose(state,r.kind,r.id);}),{itemId:'safeline-overview-attention',title:'資源提醒',hidden:true,height:180,margin:12,
                     store:{fields:['id','kind','name','status','domains','ports'],data:[]}})] });
         return state.page.down('#safeline-dashboard');
     }

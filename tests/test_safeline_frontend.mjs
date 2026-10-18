@@ -109,6 +109,50 @@ function inventory(name = '<img src=x onerror=alert(1)>', code = 'running') {
     return { resources: { applications: [{ id: '12', kind: 'applications', name, domains: ['app.example'], ports: ['443'], status: { code, label: '防護模式' } }], deny: [], allow: [], certificates: [], 'ip-groups': [] },
         policies: [], errors: {}, totals: {}, truncated: {}, origin_id: 'waf-origin', connection_revision: 1, updated_at: '2026-10-18T12:00:00Z' };
 }
+function applicationList(b, state, fields) {
+    const data = inventory('Management'); Object.assign(data.resources.applications[0], fields);
+    b.reply('/connection', connection); b.reply('/inventory', data);
+    state.tree.fire('itemclick', {}, state.tree.getStore().getNodeById('type:applications'));
+    return state.page.down('#safeline-body').children[0];
+}
+
+test('application list includes card information with exact counts and checkmarks instead of switch text', () => {
+    const b = browser(), state = b.enter(), table = applicationList(b, state, {
+        comment: 'Operations', req_value: 54400, denied_value: 1729,
+        cc_enabled: true, bot_enabled: false, auth_enabled: true, attack_enabled: true,
+    });
+    const row = table.getStore().rows[0], column = (key) => table.columns.find(c => c.dataIndex === key);
+    assert.equal(table.columns.map(c => c.text).join(','), '名稱,說明,狀態,域名,監聽,今日請求,今日攔截,CC 防護,BOT 防護,身份認證,攻擊防護');
+    assert.equal(column('req_value').renderer(row.data.req_value, {}, row), '54,400');
+    assert.equal(column('denied_value').renderer(row.data.denied_value, {}, row), '1,729');
+    assert.equal(column('comment').renderer(row.data.comment), 'Operations');
+    const checked = column('cc_enabled').renderer(true, {}, row), off = column('bot_enabled').renderer(false, {}, row);
+    assert.ok(checked.includes('fa-check')); assert.equal(checked.replace(/<[^>]*>/g, ''), '');
+    assert.equal(off.replace(/<[^>]*>/g, ''), ''); assert.ok(!off.includes('fa-check'));
+    table.fire('itemdblclick', {}, row); assert.equal(state.selection.id, '12');
+});
+
+test('application switch and counter cells distinguish disabled, unknown and zero values', () => {
+    const b = browser(), state = b.enter(), table = applicationList(b, state, { req_value: 0, denied_value: null });
+    const row = table.getStore().rows[0], render = (key, v) => table.columns.find(c => c.dataIndex === key).renderer(v, {}, row);
+    assert.equal(render('req_value', 0), '0'); assert.equal(render('denied_value', null), '—');
+    for (const value of [null, undefined, 0, 1, 'false']) assert.ok(render('cc_enabled', value).includes('—'));
+    assert.ok(!render('cc_enabled', false).includes('—'));
+    row.data.stale = true;
+    assert.ok(render('cc_enabled', true).includes('—')); assert.equal(render('req_value', 54400), '—');
+});
+
+test('application list refresh updates metrics and marks unavailable inventory as unknown', () => {
+    const b = browser(), state = b.enter(); applicationList(b, state, { req_value: 10, cc_enabled: false });
+    state.tree.tbar[0].handler(); const fresh = inventory('Management');
+    Object.assign(fresh.resources.applications[0], { req_value: 20, denied_value: 2, cc_enabled: true }); b.reply('/inventory', fresh);
+    let table = state.page.down('#safeline-body').children[0], row = table.getStore().rows[0];
+    assert.equal(row.get('req_value'), 20); assert.equal(row.get('cc_enabled'), true);
+    state.tree.tbar[0].handler(); const partial = inventory(); partial.errors.applications = 'safeline_timeout'; partial.resources.applications = [];
+    b.reply('/inventory', partial); table = state.page.down('#safeline-body').children[0]; row = table.getStore().rows[0];
+    assert.equal(row.get('stale'), true);
+    assert.ok(table.columns.find(c => c.dataIndex === 'cc_enabled').renderer(true, {}, row).includes('—'));
+});
 
 test('SafeLine view loads through its own API and restores the native and container views', () => {
     const b = browser(), state = b.enter();
