@@ -115,9 +115,12 @@ test('SafeLine view loads through its own API and restores the native and contai
     const renderer = state.tree.columns[0].renderer;
     assert.ok(renderer('<img>', {}, state.tree.getStore().getNodeById('applications:12')).includes('&lt;img&gt;'));
     assert.ok(b.requests.every((r) => r.options.url.startsWith(base + '/')));
+    state.tree.fire('itemclick', {}, state.tree.getStore().getNodeById('applications:12'));
+    assert.equal(state.selection.id, '12');
     b.native.setViewFilter({ id: 'pve-komodo-containers' });
     assert.equal(state.active, false); assert.equal(state.tree.hidden, true);
     assert.equal(b.owner.down('#pve-komodo-container-tree').hidden, false); assert.equal(b.timers.size, 0);
+    assert.equal(state.selection.kind, 'root'); assert.equal(state.selection.id, undefined, 'a later connection cannot inherit a previous resource ID');
     b.native.setViewFilter({ id: 'server' }); assert.equal(b.native.hidden, false);
     assert.equal(b.warnings.length, 0);
 });

@@ -61,6 +61,7 @@
         state.active = false; cancel(state, true);
         if (alive(state.editor)) state.editor.destroy(); state.editor = null;
         state.connection = null; state.inventory = null; state.overview = null; state.health = null; state.origin = null; state.user = null;
+        state.selection = { kind: 'root' }; state.tab = null; state.logFilters = {}; state.logPage = 1;
         if (alive(state.page)) state.page.destroy(); state.page = null;
         const root = state.tree.getRootNode(); if (root) root.removeAll();
     }
