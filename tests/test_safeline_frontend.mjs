@@ -395,3 +395,115 @@ test('polling cannot overlap pending overview work and logout clears dashboard s
     b.workspace.onLogin(null);
     assert.equal(state.overview, null); assert.equal(state.dashboardCaps, null); assert.equal(state.overviewFilters.siteId, null); assert.equal(state.geoRegion, 'world');
 });
+
+function advancedData(premium = true) {
+    const values = {};
+    for (const key of ['ipv6','http_1.0','http2','force_https','hsts','hsts_sub','hsts_preload','gzip','br','sse','ntlm','default_server','reset_xff']) values[key] = { global: true, value: false };
+    Object.assign(values, {
+        ip_source: { global: false, value: 'xff_dynamic' }, ip_value: { global: false, value: '{"position": "from_start", "index": 1}' },
+        host: { global: false, value: '$http_host' }, xfp: { global: true, value: '$scheme' }, xfh: { global: true, value: '$http_host' },
+        hsts_max_age: { global: false, value: '15768000' }, ssl_protocols: { global: false, value: 'TLSv1.2 TLSv1.3' }, ssl_ciphers: { global: false, value: '' },
+        http_headers: { global: false, value: [{ target: 'req', op: 'set', key: 'Authorization', val: '', keep: 0 }] },
+    });
+    return { values, locked: premium ? [] : ['ssl_protocols','ssl_ciphers','http_headers'], capabilities: { edition: premium ? 2 : 0, premium }, fingerprint: 'b'.repeat(64), connection_revision: 1, updated_at: '2026-10-18T15:00:00Z' };
+}
+function startAdvanced(b, state, data = advancedData()) {
+    b.reply('/connection', connection); b.reply('/inventory', inventory('app'));
+    state.tree.fire('itemclick', {}, state.tree.getStore().getNodeById('type:applications'));
+    const nav = state.page.down('#safeline-nav'); assert.ok(nav.getStore().getById('advanced'));
+    nav.fire('itemclick', {}, nav.getStore().getById('advanced'));
+    b.reply('/configuration/proxy', data);
+    b.reply('/configuration/groups', { ...data, values: { enable: false }, locked: data.capabilities.premium ? [] : ['enable'] });
+    return state.page.down('#safeline-advanced');
+}
+function advancedField(panel, key) { return panel.down('#safeline-advanced-' + key.replace(/[._]/g, '-')); }
+
+test('application type has a global advanced page with native options and independent group settings', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
+    assert.equal(state.selection.kind, 'applications'); assert.equal(state.selection.id, undefined);
+    assert.equal(advancedField(panel, 'source').getStore().rows.length, 7);
+    assert.equal(advancedField(panel, 'xff-position').getStore().rows.map(r => r.data.id).join(','), 'from_start,from_end');
+    assert.equal(advancedField(panel, 'xff-index').maxValue, 100);
+    assert.equal(advancedField(panel, 'ssl_protocols').xtype, 'tagfield');
+    assert.equal(advancedField(panel, 'ssl_protocols').getStore().rows.length, 6);
+    assert.equal(panel.down('#safeline-advanced-save-proxy').disabled, false);
+    assert.equal(panel.down('#safeline-advanced-save-groups').disabled, false);
+    assert.ok(!JSON.stringify(panel.down('#safeline-advanced-headers').getStore().rows).includes('private-header'));
+});
+
+test('advanced save sends a minimal CSRF-protected patch and leaves original XFF formatting untouched', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
+    advancedField(panel, 'gzip').checked = true;
+    panel.down('#safeline-advanced-save-proxy').handler();
+    const request = b.requests.at(-1).options;
+    assert.equal(request.method, 'PUT'); assert.equal(request.url, base + '/configuration/proxy');
+    assert.equal(request.headers['X-PVE-Plugins-CSRF'], 'csrf-value');
+    assert.equal(JSON.stringify(request.jsonData.changes), JSON.stringify({ gzip: { global: true, value: true } }));
+    assert.equal(request.jsonData.fingerprint, 'b'.repeat(64)); assert.equal(request.jsonData.expected_revision, 1);
+    assert.match(request.jsonData.operation_id, /^[0-9a-f-]{36}$/);
+});
+
+test('source IP controls produce the native dynamic XFF representation', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
+    advancedField(panel, 'xff-position').value = 'from_end'; advancedField(panel, 'xff-index').value = 2;
+    panel.down('#safeline-advanced-save-proxy').handler();
+    const changes = b.requests.at(-1).options.jsonData.changes;
+    assert.equal(changes.ip_source.value, 'xff_dynamic');
+    assert.equal(changes.ip_value.value, '{"position":"from_end","index":2}');
+    assert.equal(changes.ip_value.global, false);
+    assert.equal(Object.keys(changes).length, 2);
+});
+
+test('personal edition keeps basic editing available while locking paid configuration', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state, advancedData(false));
+    assert.equal(advancedField(panel, 'gzip').disabled, false);
+    assert.equal(advancedField(panel, 'ssl_protocols').disabled, true);
+    assert.equal(panel.down('#safeline-advanced-headers').disabled, true);
+    assert.equal(advancedField(panel, 'enable').disabled, true);
+    assert.equal(panel.down('#safeline-advanced-save-groups').disabled, true);
+    advancedField(panel, 'gzip').checked = true; panel.down('#safeline-advanced-save-proxy').handler();
+    assert.equal(JSON.stringify(b.requests.at(-1).options.jsonData.changes), JSON.stringify({ gzip: { global: true, value: true } }));
+});
+
+test('inventory polling preserves advanced controls and unsaved drafts', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state), source = advancedField(panel, 'source');
+    advancedField(panel, 'gzip').checked = true;
+    for (const timer of [...b.timers]) timer.fn();
+    b.reply('/inventory', inventory('renamed'));
+    assert.equal(state.page.down('#safeline-advanced'), panel); assert.equal(advancedField(panel, 'source'), source);
+    assert.equal(advancedField(panel, 'gzip').getValue(), true);
+    assert.equal(b.requests.filter(r => r.options.url === base + '/configuration/proxy').length, 1);
+});
+
+test('private header references survive editing other rows and never become plaintext values', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state), table = panel.down('#safeline-advanced-headers');
+    table.getStore().add({ target: 'res', op: 'set', key: 'Cache-Control', val: 'no-store' });
+    panel.down('#safeline-advanced-save-proxy').handler();
+    const rows = b.requests.at(-1).options.jsonData.changes.http_headers.value;
+    assert.equal(rows[0].val, ''); assert.equal(rows[0].keep, 0); assert.equal(rows[1].target, 'res');
+    assert.equal(Object.keys(b.requests.at(-1).options.jsonData.changes).length, 1);
+});
+
+test('group settings use their own fingerprint and confirmed writes reload only their section', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
+    advancedField(panel, 'enable').checked = true; panel.down('#safeline-advanced-save-groups').handler();
+    const pending = b.requests.at(-1);
+    assert.equal(pending.options.url, base + '/configuration/groups');
+    assert.equal(JSON.stringify(pending.options.jsonData.changes), '{"enable":true}');
+    b.reply('/configuration/groups', { outcome: 'confirmed', connection_revision: 1 }, 200, pending);
+    assert.equal(b.requests.at(-1).options.method, 'GET');
+    assert.equal(b.requests.at(-1).options.url, base + '/configuration/groups');
+    assert.equal(b.requests.filter(r => r.options.url === base + '/configuration/proxy').length, 1);
+});
+
+test('unconfirmed advanced writes retain the draft, disable retries and cannot update a logged-out view', () => {
+    const b = browser(), state = b.enter(), panel = startAdvanced(b, state);
+    advancedField(panel, 'gzip').checked = true; panel.down('#safeline-advanced-save-proxy').handler();
+    const pending = b.requests.at(-1);
+    b.reply('/configuration/proxy', { outcome: 'unknown', connection_revision: 1 }, 200, pending);
+    assert.equal(advancedField(panel, 'gzip').getValue(), true); assert.equal(panel.down('#safeline-advanced-save-proxy').disabled, true);
+    const count = b.requests.length; b.workspace.onLogin(null);
+    assert.equal(state.page, null); assert.equal(b.requests.length, count);
+    b.reply('/configuration/proxy', { ...advancedData(), values: { secret: 'late-private-data' } }, 200, pending);
+    assert.equal(state.page, null);
+});

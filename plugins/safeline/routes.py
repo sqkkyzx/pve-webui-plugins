@@ -210,6 +210,29 @@ def register_routes(context, store, service):
         except SafeLineError as error:
             raise HTTPException(error.status, error.code) from None
 
+    @application.get(base + "/configuration/{section}")
+    async def get_configuration(request: Request, section: str):
+        user = await authorize(request)
+        query(request, set())
+        if section not in {"proxy", "groups"}:
+            raise HTTPException(422, "invalid_safeline_resource")
+        try:
+            return {"user": user, **await editor.load("configuration", section, "settings")}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
+    @application.put(base + "/configuration/{section}")
+    async def put_configuration(request: Request, section: str):
+        user = await authorize(request, write=True)
+        query(request, set())
+        if section not in {"proxy", "groups"}:
+            raise HTTPException(422, "invalid_safeline_resource")
+        value = await command(request, EditCommand)
+        try:
+            return {"user": user, **await editor.save("configuration", section, "settings", value, user)}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
     @application.put(base + "/resources/{kind}/{identifier}/edit")
     async def save_resource(request: Request, kind: str, identifier: str):
         user = await authorize(request, write=True)

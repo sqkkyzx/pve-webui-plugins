@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 
 from plugins.safeline.connection import SafeLineError
 from plugins.safeline.service import _PROXY, now, policy, rows, safe, take
+from plugins.safeline import advanced
 
 
 Identifier = Annotated[StrictInt, Field(ge=0, le=9_007_199_254_740_991)]
@@ -131,6 +132,8 @@ class ResourceEditor:
         self.lock = asyncio.Lock()
 
     async def raw(self, client, kind, identifier, section):
+        if kind == "configuration" and section == "settings":
+            return await advanced.read(client, identifier)
         if kind == "applications" and section in {"settings", "mode", "proxy"}:
             value = await client.get("/api/open/site/" + identifier)
             if not isinstance(value, dict) or str(value.get("id")) != identifier:
@@ -169,6 +172,8 @@ class ResourceEditor:
         raise SafeLineError("invalid_safeline_resource", 422)
 
     def values(self, raw, kind, section, token):
+        if kind == "configuration":
+            return advanced.values(raw, section, token)
         locked = []
         if kind == "applications":
             if section == "mode":
@@ -209,9 +214,10 @@ class ResourceEditor:
         if expected_revision is not None and expected_revision != revision:
             raise SafeLineError("safeline_connection_changed", 409)
         raw = await self.raw(client, kind, identifier, section)
-        values, locked = self.values(raw, kind, section, client.connection.token)
+        values, locked = self.values(raw, kind, identifier if kind == "configuration" else section, client.connection.token)
         return {"values": values, "locked": locked, "certificate_type": raw.get("type") if kind == "certificates" else None,
-                "fingerprint": self.resource_fingerprint(client, revision, raw), "connection_revision": revision, "updated_at": now()}
+                "fingerprint": self.resource_fingerprint(client, revision, raw), "connection_revision": revision, "updated_at": now(),
+                **({"capabilities": advanced.capabilities(raw)} if kind == "configuration" else {})}
 
     @staticmethod
     def resource_fingerprint(client, revision, raw):
@@ -297,10 +303,11 @@ class ResourceEditor:
             raw = await self.raw(client, kind, identifier, section)
             if self.resource_fingerprint(client, revision, raw) != command.fingerprint:
                 raise SafeLineError("safeline_resource_changed", 409)
-            available, locked = self.values(raw, kind, section, client.connection.token)
+            available, locked = self.values(raw, kind, identifier if kind == "configuration" else section, client.connection.token)
             if not set(command.changes) <= set(available):
                 raise SafeLineError("safeline_edit_unsupported", 409)
-            method, path, payload, patch = self.build(copy.deepcopy(raw), command.changes, kind, identifier, section)
+            method, path, payload, patch = (advanced.build(raw, identifier, command.changes, client.connection.token) if kind == "configuration" else
+                                          self.build(copy.deepcopy(raw), command.changes, kind, identifier, section))
             if self.store.load()[1] != revision:
                 raise SafeLineError("safeline_connection_changed", 409)
             target = fingerprint({"revision": revision, "kind": "policies" if kind in {"allow", "deny"} else kind, "id": identifier})
@@ -311,7 +318,8 @@ class ResourceEditor:
                 await client.write(method, path, payload)
                 accepted = True
                 updated = await self.raw(client, kind, identifier, section)
-                verified = all(updated.get(k) == v for k, v in patch.items())
+                verify = updated.get("proxy", {}) if kind == "configuration" and identifier == "proxy" else {"enable": updated["groups"]} if kind == "configuration" else updated
+                verified = all(verify.get(k) == v for k, v in patch.items())
                 if kind == "certificates":
                     verified = all(updated.get("acme", {}).get(k) == v for k, v in patch.items()) if raw["type"] == 3 else pem(updated.get("manual", {}).get("crt", "")) == pem(patch["crt"])
                 if verified:

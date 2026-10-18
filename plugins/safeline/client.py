@@ -12,7 +12,7 @@ from plugins.safeline.connection import SafeLineError
 _PATHS = {"/api/open/" + name for name in (
     "system", "system/edition", "site", "site/group", "policy", "policy/detail", "cert",
     "ipgroup", "ipgroup/detail", "events", "events/rule", "records", "records/rule",
-    "security_posture/statistics", "security_posture/trends", "security_posture/realtime",
+    "security_posture/statistics", "security_posture/trends", "security_posture/realtime", "global/proxy", "site/group/switch",
 )} | {"/api/stat/" + name for name in (
     "qps", "advance/access", "advance/attack", "advance/trend/access", "advance/trend/intercept",
     "advance/error_status_code", "advance/location",
@@ -21,7 +21,8 @@ _SITE = re.compile(r"/api/open/site/[1-9][0-9]*(?:/(?:proxy|semantics|acl))?\Z")
 _CERT = re.compile(r"/api/open/cert/[1-9][0-9]*\Z")
 _WRITES = {("PUT", "/api/open/site"), ("PUT", "/api/open/site/mode"),
            ("PUT", "/api/open/policy"), ("PUT", "/api/open/policy/switch"),
-           ("PUT", "/api/open/ipgroup"), ("POST", "/api/open/cert")}
+           ("PUT", "/api/open/ipgroup"), ("POST", "/api/open/cert"),
+           ("PUT", "/api/open/global/proxy"), ("PUT", "/api/commercial/site/group/switch")}
 _PROXY_WRITE = re.compile(r"/api/open/site/[1-9][0-9]*/proxy\Z")
 _QUERY = {"page", "page_size", "action", "id", "start", "end", "ip", "host", "port", "event_id",
           "policy_rule_id", "begin_time", "end_time", "site_id", "time_preset", "url", "attack_type",
