@@ -2,7 +2,11 @@
     // SafeLine-only asset. All data and edits use the existing PVE session boundary.
     window.__pveSafeLineAttackPages = function (ctx) {
         const Ext = window.Ext, state = ctx.state, enc = ctx.enc, alive = ctx.alive;
-        if (Ext.util && Ext.util.CSS) Ext.util.CSS.createStyleSheet('.sl-ip-choice{font-family:FontAwesome;display:inline-block;width:23px}.sl-ip-choice:before{content:"\\f096"}.x-boundlist-selected .sl-ip-choice:before{content:"\\f046"}', 'safeline-ip-choices');
+        if (Ext.util && Ext.util.CSS) Ext.util.CSS.createStyleSheet(
+            '.sl-ip-choice{font-family:FontAwesome;display:inline-block;width:23px}.sl-ip-choice:before{content:"\\f096"}.x-boundlist-selected .sl-ip-choice:before{content:"\\f046"}' +
+            '.sl-log-action{display:inline-block;min-width:44px;padding:0 6px;border-radius:3px;line-height:inherit;vertical-align:top;text-align:center}' +
+            '.sl-log-action-deny{background-color:#fde8e8;color:#9b1c1c}.sl-log-action-allow{background-color:#fff3cd;color:#795400}',
+            'safeline-attack-styles');
         const attackNames = ['SQL 注入', 'XSS', 'CSRF', 'SSRF', '拒絕服務', '後門', '反序列化', '程式碼執行', '程式碼注入', '命令注入',
             '檔案上傳', '檔案包含', '重新導向', '權限不當', '資訊洩漏', '未授權存取', '不安全的設定', 'XXE', 'XPath 注入', 'LDAP 注入',
             '目錄穿越', '掃描器', '水平權限繞過', '垂直權限繞過', '檔案修改', '檔案讀取', '檔案刪除', '邏輯錯誤', 'CRLF 注入', '範本注入',
@@ -193,7 +197,10 @@
                     { text: '開始時間', dataIndex: 'start_at', flex: 1, minWidth: 180, maxWidth: 240, renderer: function (v) { return enc(ctx.date(v, true)); } },
                     { text: '結束時間', dataIndex: 'end_at', flex: 1, minWidth: 180, maxWidth: 240, renderer: function (v) { return enc(ctx.date(v, true)); } }]
                     : [{ text: '時間', dataIndex: 'timestamp', width: 180, renderer: function (v) { return enc(ctx.date(v)); } },
-                        { text: '動作', dataIndex: 'action', width: 80, renderer: function (v) { return enc(action(v)); } }, ip, icon, location, host,
+                        { text: '動作', dataIndex: 'action', width: 80, renderer: function (v) {
+                            const label = enc(action(v));
+                            return v === 0 || v === 1 ? '<span class="sl-log-action sl-log-action-' + (v === 1 ? 'deny' : 'allow') + '">' + label + '</span>' : label;
+                        } }, ip, icon, location, host,
                         { text: '路徑', dataIndex: 'url_path', flex: 1, minWidth: 200, renderer: cellText }, { text: '攻擊類型', dataIndex: 'attack_type', width: 130, renderer: function (v) { return enc(attack(v)); } }];
                 if (!events && data.module_in_list !== false) columns.push({ text: '命中防護模組', dataIndex: 'module', width: 190, renderer: function (v) { return enc(moduleName(v)); } });
                 let panel, table;
