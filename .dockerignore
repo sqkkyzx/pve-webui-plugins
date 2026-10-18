@@ -1,5 +1,6 @@
 *
 !requirements.txt
+!requirements-debug.txt
 !app/
 !app/**
 !plugins/

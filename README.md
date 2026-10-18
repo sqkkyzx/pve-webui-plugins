@@ -89,7 +89,7 @@ curl --fail http://127.0.0.1:18080/pve-plugins/health
 | `PVE_ADMIN_USERS` | 完整 PVE 使用者 ID 白名單，預設 `root@pam`；仍須具有 `/` 的 `Sys.Audit` |
 | `PVE_TLS_VERIFY`、`PVE_CA_FILE` | 原始 PVE 的憑證驗證；自簽 CA 需唯讀掛載公開 CA 憑證 |
 | `PVE_RUNTIME_DIR` | 生成檔目錄；Docker 預設 `/run/pve-webui-plugins`，直接執行 Python 未設定時僅在記憶體生成 |
-| `PVE_EXTENSION_IMAGE`、`PVE_EXTENSION_BIND` | Compose 映像及綁定位址；預設本地映像、`127.0.0.1:18080` |
+| `PVE_EXTENSION_IMAGE`、`PVE_EXTENSION_BIND`、`PVE_EXTENSION_PORT` | Compose 映像、綁定位址與主機端口；預設本地映像、`127.0.0.1:18080` |
 | `KOMODO_URL`、`KOMODO_API_KEY`、`KOMODO_API_SECRET` | Komodo 插件的固定 Core origin 及憑據；三項齊全才配置完成 |
 | `KOMODO_TLS_VERIFY` | Core TLS 驗證，預設 `true`，與 PVE 分開 |
 | `PVE_TEMPERATURE_SOURCES_FILE` | 溫度來源覆蓋；預設從 PVE 自動取得節點 IP 並讀取 node_exporter 9100 |
@@ -124,6 +124,16 @@ PVE origin 的主機名須與憑證相符。Nginx 到 PVE 的 TLS 也需要單�
 - `/pve-komodo/health` 與 `/pve-komodo/api/session`：相容入口。
 
 ## 開發與驗證
+
+使用 [compose.debug.yaml](compose.debug.yaml) 可直接掛載後端、插件及模板，修改主機上的檔案後自動重新載入：
+
+```sh
+docker compose -f compose.yaml -f compose.debug.yaml up -d --build
+```
+
+此模式使用獨立的 `debug` 映像建構階段，增加已鎖定的 `watchfiles` 依賴；一般映像保持原有執行依賴。監看 `app/`、`plugins/`、`templates/` 內的 Python、JavaScript、JSON 描述檔和模板，並使用輪詢以支援 CephFS 等共用檔案系統。三個來源目錄在容器內唯讀，直接編輯主機上的來源即可；資料庫仍使用獨立的可寫掛載。
+
+檔案變更會重新啟動應用程序並重建模板輸出；瀏覽器刷新後載入新前端。修改 `.env` 的插件組合仍須以相同的兩個 `-f` 參數執行 `up -d --force-recreate`。
 
 Python 3.12，Node.js 20 或更新版本。前端使用原生 JavaScript，不需要前端建構。
 

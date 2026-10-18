@@ -1,0 +1,35 @@
+# docker compose -f compose.yaml -f compose.debug.yaml up -d --build
+services:
+  pve-webui-plugins:
+    build:
+      target: debug
+    environment:
+      # Polling also notices source edits on shared filesystems such as CephFS.
+      WATCHFILES_FORCE_POLLING: 'true'
+    volumes:
+      - ./app:/app/app:ro
+      - ./plugins:/app/plugins:ro
+      - ./templates:/app/templates:ro
+    command:
+      - uvicorn
+      - app.main:create_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - '8000'
+      - --no-access-log
+      - --no-proxy-headers
+      - --reload
+      - --reload-dir
+      - /app/app
+      - --reload-dir
+      - /app/plugins
+      - --reload-dir
+      - /app/templates
+      - --reload-include
+      - '*.js'
+      - --reload-include
+      - '*.json'
+      - --reload-include
+      - '*.tmpl'

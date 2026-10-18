@@ -28,7 +28,7 @@ services:
     tmpfs:
       - /run/pve-webui-plugins:rw,noexec,nosuid,size=1m,uid=10001,gid=10001,mode=0700
     ports:
-      - "${PVE_EXTENSION_BIND:-127.0.0.1}:18080:8000"
+      - "${PVE_EXTENSION_BIND:-127.0.0.1}:${PVE_EXTENSION_PORT:-18080}:8000"
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

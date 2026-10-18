@@ -13,3 +13,5 @@ collector-token
 *.key
 runtime/
 .DS_Store
+compose.host.yaml
+.deployments/

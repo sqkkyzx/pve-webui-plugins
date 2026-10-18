@@ -55,3 +55,7 @@ jobs:
         run: docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$GITHUB_SHA" -t pve-webui-plugins:ci .
       - name: Verify all eight combinations in non-root read-only containers
         run: python3 scripts/smoke_image.py pve-webui-plugins:ci
+      - name: Build debug image
+        run: docker build --platform linux/amd64 --target debug --build-arg SOURCE_REVISION="$GITHUB_SHA" -t pve-webui-plugins:debug-ci .
+      - name: Verify source mounts and reload of Python, JavaScript, JSON and templates
+        run: python3 scripts/smoke_debug.py pve-webui-plugins:debug-ci
