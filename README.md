@@ -40,7 +40,7 @@ PVE_PLUGINS=
 
 修改後執行 `docker compose up -d --force-recreate`，再刷新瀏覽器。這一版在啟動時選擇插件，尚未提供執行中的熱卸載。停用保留原有資料，重新啟用可繼續讀取。
 
-`PVE_EXTENSION_ENABLED=false` 僅停止桌面注入；若要一併移除所有插件 API，使用空的 `PVE_PLUGINS`。單次繞過可訪問 `/?pve-plugins=off`，既有的 `/?pve-komodo=off` 也保留。
+`PVE_PLUGINS_INJECTION_ENABLED=false` 僅停止桌面注入；若要一併移除所有插件 API，使用空的 `PVE_PLUGINS`。單次繞過可訪問 `/?pve-plugins=off`。
 
 ## 模板與載入
 
@@ -75,7 +75,7 @@ curl --fail http://127.0.0.1:18080/pve-plugins/health
 
 範例預設本地建構 `pve-webui-plugins:local`，不假設任何 GHCR 標籤已發布。CI 會測試和建構映像，不會自動發布映像或部署到 PVE。
 
-將 [Nginx 範例](nginx.example.conf) 合入既有配置，替換域名、CA 與上游。只有根路徑 `/`、`/pve-plugins/` 和相容路徑 `/pve-komodo/` 轉交擴充；PVE 原生 API、資源、上傳下載和控制台 WebSocket 仍直連原 PVE。檢查 Nginx 配置後再重載，並保留原始 `:8006` 管理入口。
+將 [Nginx 範例](nginx.example.conf) 合入既有配置，替換域名、CA 與上游。只有根路徑 `/` 和 `/pve-plugins/` 轉交插件服務；PVE 原生 API、資源、上傳下載和控制台 WebSocket 仍直連原 PVE。檢查 Nginx 配置後再重載，並保留原始 `:8006` 管理入口。
 
 服務使用 UID/GID `10001:10001`；Compose 設定唯讀根檔案系統、獨立可寫 runtime tmpfs 及 `data` 掛載。擴充不需要 Docker socket、privileged、PVE SSH 憑據或 PVE 主機目錄掛載。
 
@@ -85,15 +85,15 @@ curl --fail http://127.0.0.1:18080/pve-plugins/health
 | --- | --- |
 | `PVE_UPSTREAM` | 必填，固定 HTTPS origin，例如 `https://pve.example.internal:8006` |
 | `PVE_PLUGINS` | 逗號分隔插件 ID；未設定預設全部，明確空值停用全部 |
-| `PVE_EXTENSION_ENABLED` | 桌面注入開關，預設 `true` |
+| `PVE_PLUGINS_INJECTION_ENABLED` | 桌面注入開關，預設 `true` |
 | `PVE_ADMIN_USERS` | 完整 PVE 使用者 ID 白名單，預設 `root@pam`；仍須具有 `/` 的 `Sys.Audit` |
 | `PVE_TLS_VERIFY`、`PVE_CA_FILE` | 原始 PVE 的憑證驗證；自簽 CA 需唯讀掛載公開 CA 憑證 |
-| `PVE_RUNTIME_DIR` | 生成檔目錄；Docker 預設 `/run/pve-webui-plugins`，直接執行 Python 未設定時僅在記憶體生成 |
-| `PVE_EXTENSION_IMAGE`、`PVE_EXTENSION_BIND`、`PVE_EXTENSION_PORT` | Compose 映像、綁定位址與主機端口；預設本地映像、`127.0.0.1:18080` |
-| `KOMODO_URL`、`KOMODO_API_KEY`、`KOMODO_API_SECRET` | Komodo 插件的固定 Core origin 及憑據；三項齊全才配置完成 |
-| `KOMODO_TLS_VERIFY` | Core TLS 驗證，預設 `true`，與 PVE 分開 |
-| `PVE_TEMPERATURE_SOURCES_FILE` | 溫度來源覆蓋；預設從 PVE 自動取得節點 IP 並讀取 node_exporter 9100 |
-| `PVE_ACTION_STATE_FILE`、`PVE_GUEST_LINKS_FILE`、`PVE_SITES_FILE` | 各插件的 SQLite 路徑；Compose 固定在 `/app/data/` 下 |
+| `PVE_PLUGINS_RUNTIME_DIR` | 生成檔目錄；Docker 預設 `/run/pve-webui-plugins`，直接執行 Python 未設定時僅在記憶體生成 |
+| `PVE_PLUGINS_IMAGE`、`PVE_PLUGINS_BIND`、`PVE_PLUGINS_PORT` | Compose 映像、綁定位址與主機端口；預設本地映像、`127.0.0.1:18080` |
+| `PVE_KOMODO_URL`、`PVE_KOMODO_API_KEY`、`PVE_KOMODO_API_SECRET` | Komodo 插件的固定 Core origin 及憑據；三項齊全才配置完成 |
+| `PVE_KOMODO_TLS_VERIFY` | Core TLS 驗證，預設 `true`，與 PVE 分開 |
+| `PVE_TEMPERATURES_SOURCES_FILE` | 溫度來源覆蓋；預設從 PVE 自動取得節點 IP 並讀取 node_exporter 9100 |
+| `PVE_KOMODO_ACTION_STATE_FILE`、`PVE_KOMODO_GUEST_LINKS_FILE`、`PVE_SITES_STATE_FILE` | 各插件的 SQLite 路徑；Compose 固定在 `/app/data/` 下 |
 
 自簽 PVE CA 的 Compose 覆蓋範例：
 
@@ -110,7 +110,19 @@ PVE origin 的主機名須與憑證相符。Nginx 到 PVE 的 TLS 也需要單�
 
 ### 既有安裝遷移
 
-停止舊擴充並備份 `data` 後，使用新專案的 Compose、映像和所需插件組合。保留相同的 PVE/Core origin 與 `actions.sqlite3`、`guest-links.sqlite3`、`sites.sqlite3`；不需要清空或重建資料庫。舊 `/pve-komodo/` API、資源、WebSocket 路徑及 CSRF header 保留，原有 Nginx 路由可繼續使用；新增 `/pve-plugins/` 路由可使用新的健康檢查和插件清單。
+0.4 起只提供 `/pve-plugins/` 路徑，寫入使用 `X-PVE-Plugins-CSRF`。Komodo API 位於 `/pve-plugins/api/komodo/`，站點位於 `/pve-plugins/api/sites`，溫度位於 `/pve-plugins/api/temperatures/nodes/{node}`。腳本依插件分別位於 `/pve-plugins/assets/{plugin_id}/`。舊路由、header、繞過查詢和環境變數不再提供別名或回退。
+
+停止服務後一起更新程式、前端、Compose 與 `.env`，再重建容器；瀏覽器重新整理以載入新腳本及 CSRF token。環境變數直接改名：
+
+| 舊設定 | 現行設定 |
+| --- | --- |
+| `PVE_EXTENSION_IMAGE`、`PVE_EXTENSION_BIND`、`PVE_EXTENSION_PORT` | `PVE_PLUGINS_IMAGE`、`PVE_PLUGINS_BIND`、`PVE_PLUGINS_PORT` |
+| `PVE_EXTENSION_ENABLED`、`PVE_RUNTIME_DIR` | `PVE_PLUGINS_INJECTION_ENABLED`、`PVE_PLUGINS_RUNTIME_DIR` |
+| `KOMODO_URL`、`KOMODO_API_KEY`、`KOMODO_API_SECRET`、`KOMODO_TLS_VERIFY` | `PVE_KOMODO_URL`、`PVE_KOMODO_API_KEY`、`PVE_KOMODO_API_SECRET`、`PVE_KOMODO_TLS_VERIFY` |
+| `PVE_ACTION_STATE_FILE`、`PVE_GUEST_LINKS_FILE` | `PVE_KOMODO_ACTION_STATE_FILE`、`PVE_KOMODO_GUEST_LINKS_FILE` |
+| `PVE_SITES_FILE`、`PVE_TEMPERATURE_SOURCES_FILE` | `PVE_SITES_STATE_FILE`、`PVE_TEMPERATURES_SOURCES_FILE` |
+
+保留相同的 PVE/Core origin 與 `actions.sqlite3`、`guest-links.sqlite3`、`sites.sqlite3`；不需要清空或重建資料庫。Nginx 使用現行範例的 `/pve-plugins/` 代理規則。
 
 `guest-links` 和站點庫會核對所屬 PVE origin；跨叢集應使用獨立資料庫。這是遷移方法，並不表示已自動遷移任何現有服務。
 
@@ -121,7 +133,6 @@ PVE origin 的主機名須與憑證相符。Nginx 到 PVE 的 TLS 也需要單�
 - `GET /pve-plugins/health`：服務存活、版本、啟用插件；不證明外部服務可達。
 - `GET /pve-plugins/api/session`：已驗證會話。
 - `GET /pve-plugins/api/plugins`：已驗證的啟用清單及已安裝描述檔。
-- `/pve-komodo/health` 與 `/pve-komodo/api/session`：相容入口。
 
 ## 開發與驗證
 

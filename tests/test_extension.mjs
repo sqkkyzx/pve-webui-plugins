@@ -153,7 +153,7 @@ function createExt() {
         dialogs,
         Msg: { YESNO: 'yesno', WARNING: 'warning' },
         Ajax: {
-            request(options) { (options.url.startsWith('/pve-komodo/api/guest-links') ? guestRequests : requests).push(options); return { options }; },
+            request(options) { (options.url.startsWith('/pve-plugins/api/komodo/guest-links') ? guestRequests : requests).push(options); return { options }; },
             abort(request) {
                 request.options.aborted = true;
                 request.options.callback(request.options, false, { status: 0, responseText: '' });
@@ -736,7 +736,7 @@ test('only an active parent loads the read-only API and reactivation or explicit
     card.refresh();
     assert.equal(card.browser.Ext.requests.length, 1, 'pending load is not duplicated');
     const request = card.browser.Ext.requests[0];
-    assert.equal(request.url, '/pve-komodo/api/dashboard');
+    assert.equal(request.url, '/pve-plugins/api/komodo/dashboard');
     assert.equal(request.method, 'GET');
     assert.equal(request.headers, undefined);
     assert.equal(request.jsonData, undefined);
@@ -959,10 +959,10 @@ test('only one confirmed POST uses frozen ids, a secure UUID, and the integratio
     assert.equal(card.browser.Ext.requests.length, 2);
     const request = card.browser.Ext.requests[1];
     assert.equal(request.method, 'POST');
-    assert.equal(request.url, '/pve-komodo/api/action');
+    assert.equal(request.url, '/pve-plugins/api/komodo/action');
     assert.equal(request.timeout, 120000);
-    assert.deepEqual(Object.keys(request.headers), ['X-PVE-Komodo-CSRF']);
-    assert.equal(request.headers['X-PVE-Komodo-CSRF'], 'csrf-test-token');
+    assert.deepEqual(Object.keys(request.headers), ['X-PVE-Plugins-CSRF']);
+    assert.equal(request.headers['X-PVE-Plugins-CSRF'], 'csrf-test-token');
     assert.equal(request.jsonData.section, 'servers');
     assert.equal(request.jsonData.action, 'stop_all_containers');
     assert.deepEqual(Array.from(request.jsonData.ids), ['s1', 's2']);
@@ -1136,7 +1136,7 @@ test('containers uses a lazy native grid with the requested columns and six flat
     assert.equal(grid.tbar.overflowHandler, 'scroller');
     assert.equal(card.browser.Ext.requests.length, 0);
     card.activate();
-    assert.equal(card.browser.Ext.requests[0].url, '/pve-komodo/api/containers');
+    assert.equal(card.browser.Ext.requests[0].url, '/pve-plugins/api/komodo/containers');
     assert.equal(card.browser.Ext.requests[0].method, 'GET');
     card.respond(sampleContainers());
     assert.equal(grid.getStore().data.length, 4);
@@ -1242,11 +1242,11 @@ test('a mock container POST uses composite ids and the same CSRF/UUID path and r
     const id = payload.containers[0].id;
     old.select('containers', [id]); old.click('containers', 'stop'); old.answer('yes');
     const request = old.browser.Ext.requests[1];
-    assert.equal(request.url, '/pve-komodo/api/action');
+    assert.equal(request.url, '/pve-plugins/api/komodo/action');
     assert.equal(request.jsonData.section, 'containers');
     assert.equal(request.jsonData.action, 'stop');
     assert.deepEqual(Array.from(request.jsonData.ids), [id]);
-    assert.equal(request.headers['X-PVE-Komodo-CSRF'], 'container-csrf');
+    assert.equal(request.headers['X-PVE-Plugins-CSRF'], 'container-csrf');
     assert.match(request.jsonData.request_id, /^[0-9a-f-]{36}$/);
     old.destroy();
     assert.equal(request.aborted, undefined);
@@ -1308,7 +1308,7 @@ test('alerts is a lazy native read-only grid preserving server time order withou
     assert.equal(card.browser.Ext.requests.length, 0);
     card.activate();
     const request = card.browser.Ext.requests[0];
-    assert.equal(request.url, '/pve-komodo/api/alerts');
+    assert.equal(request.url, '/pve-plugins/api/komodo/alerts');
     assert.equal(request.method, 'GET');
     assert.equal(request.disableCaching, false, 'ExtJS must not append _dc to the strict alert query');
     assert.deepEqual(JSON.parse(JSON.stringify(request.params)), { page: 0 });
@@ -1448,7 +1448,7 @@ test('leaving alerts cancels its GET and details window and ignores late callbac
     home.destroy();
     const card = alertsPage(home.browser);
     card.activate();
-    assert.equal(card.browser.Ext.requests.at(-1).url, '/pve-komodo/api/alerts');
+    assert.equal(card.browser.Ext.requests.at(-1).url, '/pve-plugins/api/komodo/alerts');
     card.respond(sampleAlerts());
     const details = card.openDetails(sampleAlerts().alerts[0]);
     card.press('refresh');
@@ -1516,7 +1516,7 @@ test('updates is a lazy read-only server-paged list with complete operation filt
     assert.equal(card.browser.Ext.requests.length, 0);
     card.activate();
     const request = card.browser.Ext.requests[0];
-    assert.equal(request.url, '/pve-komodo/api/updates');
+    assert.equal(request.url, '/pve-plugins/api/komodo/updates');
     assert.equal(request.method, 'GET');
     assert.equal(request.disableCaching, false, 'actual ExtJS must not append an unsupported _dc query');
     assert.deepEqual(JSON.parse(JSON.stringify(request.params)), { page: 0 });
@@ -1588,7 +1588,7 @@ test('update details load on demand into a read-only native window and show only
     assert.equal(window.buttons, undefined);
     assert.equal(window.down('#pve-komodo-update-summary').html, '正在加载操作详情…');
     const request = card.browser.Ext.requests[1];
-    assert.equal(request.url, '/pve-komodo/api/updates/' + 'a'.repeat(24));
+    assert.equal(request.url, '/pve-plugins/api/komodo/updates/' + 'a'.repeat(24));
     assert.equal(request.method, 'GET'); assert.equal(request.disableCaching, false);
     assert.equal(request.params, undefined);
     const payload = sampleUpdateDetail();
@@ -1799,9 +1799,9 @@ test('binding requires an explicit candidate and confirmation, with CT identity 
     assert.equal(confirm.options.defaultFocus, 'no'); assert.equal(chooser.destroyed, true);
     assert.equal(card.browser.Ext.guestRequests.length, 1); confirm.options.fn('yes');
     const request = card.browser.Ext.guestRequests.at(-1);
-    assert.equal(request.method, 'POST'); assert.equal(request.url, '/pve-komodo/api/guest-links');
+    assert.equal(request.method, 'POST'); assert.equal(request.url, '/pve-plugins/api/komodo/guest-links');
     assert.deepEqual(JSON.parse(JSON.stringify(request.jsonData)), { server_id: 's1', expected_revision: 9, guest_type: 'lxc', vmid: 252 });
-    assert.equal(request.headers['X-PVE-Komodo-CSRF'], 'guest-links-token');
+    assert.equal(request.headers['X-PVE-Plugins-CSRF'], 'guest-links-token');
     assert.equal(card.browser.Ext.requests.length, 1, 'metadata never uses Komodo actions');
 });
 
@@ -1818,7 +1818,7 @@ test('binding cancellation and selection changes never submit and unlink states 
     assert.equal(card.browser.Ext.guestRequests.length, 1, 'changed selection invalidates confirmation');
     card.select('servers', ['s1']); pressGuest(card, 'unlink'); card.browser.Ext.dialogs.at(-1).options.fn('yes');
     const request = card.browser.Ext.guestRequests.at(-1);
-    assert.equal(request.url, '/pve-komodo/api/guest-links/unlink');
+    assert.equal(request.url, '/pve-plugins/api/komodo/guest-links/unlink');
     assert.deepEqual(JSON.parse(JSON.stringify(request.jsonData)), { server_id: 's1', expected_revision: 3 });
     assert.equal(request.jsonData.guest_type, undefined);
 });
@@ -1900,7 +1900,7 @@ test('one-to-one binding never steals another server mapping and orphan cleanup 
     assert.match(confirm.options.message, /retired-server/); assert.match(confirm.options.message, /仅删除本扩展中的映射/);
     assert.equal(card.browser.Ext.guestRequests.length, 1); confirm.options.fn('yes');
     const post = card.browser.Ext.guestRequests.at(-1);
-    assert.equal(post.url, '/pve-komodo/api/guest-links/unlink');
+    assert.equal(post.url, '/pve-plugins/api/komodo/guest-links/unlink');
     assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { server_id: 'retired-server', expected_revision: 12 });
     assert.equal(card.browser.Ext.requests.length, 1, 'cleanup never dispatches a Docker operation');
 });
@@ -1959,7 +1959,7 @@ test('guest options loads only on activation for the selected VM or CT and displ
         const page = guestOptionsPage(runtime(), type, type === 'qemu' ? 102 : 252);
         assert.equal(page.browser.Ext.requests.length, 0);
         page.activate();
-        assert.equal(page.browser.Ext.requests[0].url, '/pve-komodo/api/guests/' + type + '/' + (type === 'qemu' ? 102 : 252) + '/options');
+        assert.equal(page.browser.Ext.requests[0].url, '/pve-plugins/api/komodo/guests/' + type + '/' + (type === 'qemu' ? 102 : 252) + '/options');
         assert.equal(page.browser.Ext.requests[0].method, 'GET');
         assert.equal(page.browser.Ext.requests[0].disableCaching, false);
         const payload = sampleGuestOptions(); payload.config.passkey = 'PRIVATE'; payload.config.links = ['https://example.test'];
@@ -2040,7 +2040,7 @@ test('a confirmed option save sends only the changed field with the expected ass
     editor.down('#pve-komodo-option-save').handler(); page.answer('yes');
     const request = page.browser.Ext.requests[1];
     assert.equal(request.url, page.config.pveKomodoOptionsPath); assert.equal(request.method, 'POST');
-    assert.equal(request.timeout, 120000); assert.equal(request.headers['X-PVE-Komodo-CSRF'], 'options-csrf');
+    assert.equal(request.timeout, 120000); assert.equal(request.headers['X-PVE-Plugins-CSRF'], 'options-csrf');
     assert.deepEqual(JSON.parse(JSON.stringify(request.jsonData)), {
         action: 'save', server_id: 'a'.repeat(24), binding_revision: 7, base_version: 'b'.repeat(64),
         request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b', config: { cpu_warning: 12.5 },
@@ -2262,10 +2262,10 @@ test('guest Docker summary uses three overview columns, two horizontally collaps
     assert.equal(charts[0].fields.length, 3); assert.equal(charts[2].fields.length, 3);
     assert.equal(page.control('history-interval').getValue(), '1-day'); assert.equal(page.control('history-interval').store.data.length, 10);
     assert.match(page.control('history-interval').fieldLabel, /采样间隔/);
-    page.activate(); assert.equal(page.browser.Ext.requests[0].url, '/pve-komodo/api/guests/lxc/252/summary');
+    page.activate(); assert.equal(page.browser.Ext.requests[0].url, '/pve-plugins/api/komodo/guests/lxc/252/summary');
     assert.equal(page.browser.Ext.requests[0].disableCaching, false);
     page.respond(sampleGuestSummary());
-    assert.equal(page.browser.Ext.requests[1].url, '/pve-komodo/api/guests/lxc/252/history');
+    assert.equal(page.browser.Ext.requests[1].url, '/pve-plugins/api/komodo/guests/lxc/252/history');
     assert.equal(page.browser.Ext.requests[1].disableCaching, false);
     assert.deepEqual(JSON.parse(JSON.stringify(page.browser.Ext.requests[1].params)), { interval: '1-day' });
     assert.ok(page.browser.Ext.requests.every((request) => request.method === 'GET'));
@@ -2352,12 +2352,12 @@ test('description saves one fixed bound metadata payload then reloads authoritat
     let editor = descriptionEditor(page); editor.down('#pve-komodo-description-value').setValue('中文\n<b>description</b>');
     editor.down('#pve-komodo-description-save').handler();
     const post = page.browser.Ext.requests[2];
-    assert.equal(post.url, '/pve-komodo/api/guests/qemu/102/description');
-    assert.equal(post.method, 'POST'); assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'summary-csrf');
+    assert.equal(post.url, '/pve-plugins/api/komodo/guests/qemu/102/description');
+    assert.equal(post.method, 'POST'); assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'summary-csrf');
     assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { server_id: 'a'.repeat(24), binding_revision: 4,
         base_version: 'f'.repeat(64), description: '中文\n<b>description</b>', request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b' });
     page.respond({ ok: true, status: 'completed', operation_id: null, error_code: null });
-    assert.equal(page.browser.Ext.requests[3].method, 'GET'); assert.equal(page.browser.Ext.requests[3].url, '/pve-komodo/api/guests/qemu/102/summary');
+    assert.equal(page.browser.Ext.requests[3].method, 'GET'); assert.equal(page.browser.Ext.requests[3].url, '/pve-plugins/api/komodo/guests/qemu/102/summary');
     page.respond({ ...sampleGuestSummary(), can_write: true, description: '中文\n<b>description</b>', description_version: 'e'.repeat(64) });
     page.respond(sampleGuestHistory()); assert.equal(page.control('description').html, '中文<br>&lt;b&gt;description&lt;/b&gt;');
     editor = descriptionEditor(page); editor.down('#pve-komodo-description-value').setValue(''); editor.down('#pve-komodo-description-save').handler();
@@ -2443,8 +2443,8 @@ test('all five guest summary actions explain their real effects, require confirm
     page.press('restart_all_containers'); const confirmation = page.browser.Ext.dialogs.at(-1);
     page.answer('yes'); confirmation.options.fn('yes');
     const post = page.browser.Ext.requests[2];
-    assert.equal(post.url, '/pve-komodo/api/guests/qemu/102/actions'); assert.equal(post.method, 'POST');
-    assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'summary-csrf');
+    assert.equal(post.url, '/pve-plugins/api/komodo/guests/qemu/102/actions'); assert.equal(post.method, 'POST');
+    assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'summary-csrf');
     assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { action: 'restart_all_containers', server_id: 'a'.repeat(24),
         binding_revision: 4, request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b' });
     page.respond({ section: 'servers', action: 'restart_all_containers', results: [{ id: 'a'.repeat(24), ok: true, status: 'submitted' }] });
@@ -2799,7 +2799,7 @@ test('a container leaf aborts stale server navigation and opens an independent p
     assert.equal(target.pveKomodoContainerPage, true);
     assert.equal(target.pveKomodoContainerServer, intended.server_id);
     assert.equal(target.pveKomodoContainerId, intended.id.split(':')[1]);
-    assert.equal(target.pveKomodoStackPath, '/pve-komodo/api/servers/' + intended.server_id + '/containers/' + intended.id.split(':')[1]);
+    assert.equal(target.pveKomodoStackPath, '/pve-plugins/api/komodo/servers/' + intended.server_id + '/containers/' + intended.id.split(':')[1]);
     assert.equal(target.hstateid, undefined); assert.match(target.pveSelNode.data.id, /^pve-komodo-container:/);
     assert.deepEqual(Array.from(target.items, (tab) => tab.title), ['概览', '日志', '检查', '终端']);
     assert.deepEqual(view.native.nativeResourceIds, ['root', 'qemu/102', 'lxc/252']);
@@ -2813,10 +2813,10 @@ test('unlinked servers open only Docker management while pending existing writes
     assert.equal(config.pveKomodoServerPage, true);
     assert.equal(config.pveSelNode.data.id, 'pve-komodo-server:' + '2'.repeat(24));
     assert.deepEqual(Array.from(config.items, (item) => item.title), ['Docker', '选项', 'DOCKER', '资源', '终端']);
-    assert.equal(config.items[0].pveKomodoGuestBase, '/pve-komodo/api/servers/' + '2'.repeat(24));
-    assert.equal(config.items[1].pveKomodoOptionsPath, '/pve-komodo/api/servers/' + '2'.repeat(24) + '/options');
+    assert.equal(config.items[0].pveKomodoGuestBase, '/pve-plugins/api/komodo/servers/' + '2'.repeat(24));
+    assert.equal(config.items[1].pveKomodoOptionsPath, '/pve-plugins/api/komodo/servers/' + '2'.repeat(24) + '/options');
     assert.ok(config.items.every((item) => item.pveKomodoDirectServer === '2'.repeat(24)));
-    assert.equal(config.items[4].pveKomodoStackPath, '/pve-komodo/api/servers/' + '2'.repeat(24));
+    assert.equal(config.items[4].pveKomodoStackPath, '/pve-plugins/api/komodo/servers/' + '2'.repeat(24));
     assert.equal(view.workspace.nativeSelections.length, 0, 'independent servers never invent a native VM id');
     const home = dashboard(view.browser); home.activate(); home.respond(sampleDashboard());
     home.select('procedures', ['p1']); home.click('procedures', 'run'); home.answer('yes');
@@ -2889,7 +2889,7 @@ test('stack tree text opens four native tabs with help context and never writes 
     assert.ok(page.original.tbar.slice(0, 6).every((item) => !item.menu));
     assert.equal(page.browser.Ext.requests.length, 1, 'opening a card config alone does not fetch detail or write');
     const tab = page.tab('config'), request = page.browser.Ext.requests.at(-1);
-    assert.equal(request.url, '/pve-komodo/api/stacks/' + '3'.repeat(24)); assert.equal(request.method, 'GET'); assert.equal(request.disableCaching, false);
+    assert.equal(request.url, '/pve-plugins/api/komodo/stacks/' + '3'.repeat(24)); assert.equal(request.method, 'GET'); assert.equal(request.disableCaching, false);
     page.respond(sampleStackDetails());
     const grid = tab.grid('stack-config'), rows = grid.getStore().data;
     assert.deepEqual(Array.from(rows.filter((row) => row.kind === 'heading'), (row) => [row.label, row.heading]), [
@@ -2942,7 +2942,7 @@ test('stack config editors preserve original values, reset and confirm only a ch
     editor.down('#pve-komodo-option-save').handler(); page.answer('yes');
     const post = page.browser.Ext.requests.at(-1);
     assert.equal(post.url, page.original.pveKomodoStackPath); assert.equal(post.method, 'POST');
-    assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'stack-csrf');
+    assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'stack-csrf');
     assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { action: 'config', server_id: '1'.repeat(24), base_version: 'a'.repeat(64),
         config: { environment: 'VALUE=changed' }, request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b' });
     page.respond({ ok: true, status: 'completed' });
@@ -3116,7 +3116,7 @@ test('stack terminal services gate creation and only an explicit new terminal se
     assert.equal(page.browser.Ext.requests.filter((entry) => entry.method === 'POST').length, 0);
     dialog.down('#pve-komodo-terminal-service').setValue('web'); dialog.down('#pve-komodo-terminal-shell').setValue('bash');
     dialog.down('#pve-komodo-terminal-create').handler(); const post = page.browser.Ext.requests.at(-1);
-    assert.match(post.url, /\/terminals$/); assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'terminal-csrf');
+    assert.match(post.url, /\/terminals$/); assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'terminal-csrf');
     assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { service: 'web', server_id: '1'.repeat(24), container_id: 'b'.repeat(64), shell: 'bash', request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b' });
     tab.destroy(); assert.equal(post.aborted, undefined);
     post.callback(post, true, { status: 200, responseText: JSON.stringify({ grant: 'unused-grant', session_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b', expires_in: 60 }) });
@@ -3183,7 +3183,7 @@ test('stack xterm loads same-origin assets and preserves binary output, authenti
     const socket = sockets[0], terminal = terminals[0];
     assert.equal(terminal.cols, 121); assert.equal(terminal.rows, 36, 'the terminal fits measured cells to the full available body');
     assert.equal(observers[0].element, terminalHost);
-    assert.equal(socket.url, 'wss://pve.example.test/pve-komodo/api/stacks/' + '3'.repeat(24) + '/terminals/ws');
+    assert.equal(socket.url, 'wss://pve.example.test/pve-plugins/api/komodo/stacks/' + '3'.repeat(24) + '/terminals/ws');
     assert.equal(socket.binaryType, 'arraybuffer'); socket.onopen();
     assert.deepEqual(socket.sent[0], { type: 'open', grant: 'single-use-grant', csrf_token: 'terminal-csrf' });
     terminal.data('before-ready'); assert.equal(socket.sent.length, 1);
@@ -3305,7 +3305,7 @@ test('container overview is native, identity scoped, distinguishes unknown from 
     assert.equal(page.control('container-restart').disabled, false);
     updates.listeners.itemdblclick.call(updates, null, { get: (key) => data.updates[0][key] });
     const detail = page.browser.Ext.requests.at(-1);
-    assert.equal(detail.url, '/pve-komodo/api/updates/' + data.updates[0].id); assert.equal(detail.method, 'GET');
+    assert.equal(detail.url, '/pve-plugins/api/komodo/updates/' + data.updates[0].id); assert.equal(detail.method, 'GET');
     tab.destroy(); assert.equal(detail.aborted, true, 'leaving closes and cancels the private operation detail');
 });
 
@@ -3351,7 +3351,7 @@ test('container actions confirm exact identity and preserve durable pending requ
         if (action === 'destroy') assert.match(confirmation.options.message, /可写层数据将被删除.*不删除存储卷/);
         page.answer('no'); assert.equal(page.browser.Ext.requests.filter((request) => request.method === 'POST').length, 0);
         page.press(action); page.answer('yes'); const post = page.browser.Ext.requests.at(-1);
-        assert.equal(post.url, page.original.pveKomodoStackPath + '/actions'); assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'container-csrf');
+        assert.equal(post.url, page.original.pveKomodoStackPath + '/actions'); assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'container-csrf');
         assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { action, base_version: data.version, request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b' });
         page.destroy(); assert.equal(post.aborted, undefined);
         const options = guestOptionsPage(page.browser); options.activate(); options.respond(sampleGuestOptions()); options.selectOption('region');
@@ -3476,7 +3476,7 @@ test('container terminal modes send only an explicit validated mode and command 
             assert.match(dialog.down('#pve-komodo-container-terminal-error').html, /有效命令/); command.setValue('/bin/sh -l');
         }
         dialog.down('#pve-komodo-terminal-create').handler(); const post = page.browser.Ext.requests.at(-1);
-        assert.equal(post.url, page.original.pveKomodoStackPath + '/terminals'); assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'terminal-csrf');
+        assert.equal(post.url, page.original.pveKomodoStackPath + '/terminals'); assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'terminal-csrf');
         assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { shell, ...(shell === 'custom' ? { command: '/bin/sh -l' } : {}),
             request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b' });
         tab.respond({ detail: 'PRIVATE' }, 502); assert.doesNotMatch(page.control('stack-status').text, /PRIVATE/);
@@ -3560,7 +3560,7 @@ test('server Docker inventory lays out four selectable tables in two rows and re
         assert.deepEqual(Array.from(page.config.items, (row) => Array.from(row.items, (grid) => grid.title)), [['容器', '网络'], ['存储卷', '镜像']]);
         assert.ok(page.config.items.every((row) => row.layout.type === 'hbox' && row.layout.align === 'stretch'));
         page.activate(); const request = page.browser.Ext.requests.at(-1);
-        assert.equal(request.url, '/pve-komodo/api/guests/' + type + '/' + (type === 'qemu' ? 102 : 252) + '/docker');
+        assert.equal(request.url, '/pve-plugins/api/komodo/guests/' + type + '/' + (type === 'qemu' ? 102 : 252) + '/docker');
         assert.equal(request.method, 'GET'); assert.equal(request.disableCaching, false);
         page.respond(sampleGuestInventory());
         const grid = page.inventoryGrid('containers');
@@ -3607,8 +3607,8 @@ test('server inventory selections honor builtin and per-row permissions and conf
     const selectedRow = page.inventoryGrid('containers').getStore().data[0]; selectedRow.version = 'f'.repeat(64);
     page.selectInventory('containers', ['b'.repeat(64)]);
     page.answer('yes'); const post = page.browser.Ext.requests.at(-1);
-    assert.equal(post.url, '/pve-komodo/api/guests/qemu/102/inventory-actions'); assert.equal(post.method, 'POST');
-    assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'inventory-csrf');
+    assert.equal(post.url, '/pve-plugins/api/komodo/guests/qemu/102/inventory-actions'); assert.equal(post.method, 'POST');
+    assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'inventory-csrf');
     assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { server_id: data.server_id, binding_revision: 7, section: 'containers', action: 'restart',
         request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b', targets: [{ id: 'a'.repeat(64), version: '1'.repeat(64) }] });
     assert.equal(page.control('guest-inventory-refresh').disabled, true);
@@ -3720,7 +3720,7 @@ test('server terminal keeps the shared inner terminal panel and grants only an e
         assert.equal(page.original.items[0].cls, 'pve-komodo-stack-terminal-tab');
         assert.deepEqual(Array.from(page.original.items[0].tbar, (button) => button.text), ['新建', '全屏']);
         page.activate(); const read = page.browser.Ext.requests.at(-1);
-        assert.equal(read.url, '/pve-komodo/api/guests/qemu/102/terminal-services'); assert.equal(read.method, 'GET'); assert.equal(read.disableCaching, false);
+        assert.equal(read.url, '/pve-plugins/api/komodo/guests/qemu/102/terminal-services'); assert.equal(read.method, 'GET'); assert.equal(read.disableCaching, false);
         assert.equal(tab.control('stack-new-terminal').disabled, true);
         page.respond({ server_id: '1'.repeat(24), binding_revision: 7, can_open: true, shells: ['default', 'sh', 'bash', 'custom'],
             options: { default: true, sh: true, bash: true, custom: true }, csrf_token: 'server-terminal-csrf' });
@@ -3731,7 +3731,7 @@ test('server terminal keeps the shared inner terminal panel and grants only an e
         if (shell === 'custom') dialog.down('#pve-komodo-terminal-command').setValue('/bin/sh -l');
         assert.equal(page.browser.Ext.requests.filter((request) => request.method === 'POST').length, 0);
         dialog.down('#pve-komodo-terminal-create').handler(); const post = page.browser.Ext.requests.at(-1);
-        assert.equal(post.url, '/pve-komodo/api/guests/qemu/102/terminals'); assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'server-terminal-csrf');
+        assert.equal(post.url, '/pve-plugins/api/komodo/guests/qemu/102/terminals'); assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'server-terminal-csrf');
         assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { shell, ...(shell === 'custom' ? { command: '/bin/sh -l' } : {}),
             server_id: '1'.repeat(24), binding_revision: 7, request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b' });
         page.deactivate(); assert.equal(post.aborted, undefined); page.respond({ detail: 'PRIVATE' }, 502);
@@ -3768,7 +3768,7 @@ test('tree New opens the same explicit server creation form with an optional uns
     const view = serverCreateDialog();
     assert.equal(view.tree.tbar[0].text, '刷新'); assert.equal(view.tree.tbar[1].text, '新建');
     assert.equal(view.dialog.title, '新建服务器');
-    assert.equal(view.browser.Ext.requests.at(-1).url, '/pve-komodo/api/server-create-options');
+    assert.equal(view.browser.Ext.requests.at(-1).url, '/pve-plugins/api/komodo/server-create-options');
     assert.equal(view.field('submit').disabled, true);
     view.respondCreate(view.capabilities);
     assert.deepEqual(Array.from(view.field('guest').getStore().data, (row) => row.key), ['', 'qemu/301', 'lxc/302']);
@@ -3781,9 +3781,9 @@ test('tree New opens the same explicit server creation form with an optional uns
     view.field('name').setValue('  New Server 中文  '); assert.equal(view.field('submit').disabled, false);
     view.field('submit').handler();
     const post = view.browser.Ext.requests.at(-1);
-    assert.equal(post.method, 'POST'); assert.equal(post.url, '/pve-komodo/api/servers/create');
+    assert.equal(post.method, 'POST'); assert.equal(post.url, '/pve-plugins/api/komodo/servers/create');
     assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { name: 'New Server 中文', request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b' });
-    assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'create-csrf');
+    assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'create-csrf');
     view.dialog.close(); assert.equal(view.dialog.destroyed, false, 'a pending creation cannot be accidentally dismissed');
     view.field('submit').handler(); assert.equal(view.browser.Ext.requests.at(-1), post, 'repeated clicks never duplicate creation');
     view.respondCreate({ created: true, status: 'completed', server_id: 'a'.repeat(24), server_name: 'New Server 中文', link: null }, 200, post);
@@ -3911,8 +3911,8 @@ test('summary association shares the CT identity warning and fixes server identi
     page.panel._pveKomodoSummaryData.server_id = '9'.repeat(24);
     page.panel._pveKomodoGuestCsrf = 'new-token-after-dialog';
     page.answer('yes'); const post = page.browser.Ext.guestRequests.at(-1);
-    assert.equal(post.url, '/pve-komodo/api/guest-links'); assert.equal(post.method, 'POST');
-    assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'guest-links-token');
+    assert.equal(post.url, '/pve-plugins/api/komodo/guest-links'); assert.equal(post.method, 'POST');
+    assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'guest-links-token');
     assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { server_id: page.serverId, expected_revision: 7, guest_type: 'lxc', vmid: 252 });
     assert.equal(page.control('bind').disabled, true); assert.equal(page.control('summary-refresh').disabled, true);
     page.respondLinks({ detail: 'PRIVATE' }, 409, post);
@@ -3932,14 +3932,14 @@ test('a summary binding switches direct server access to the freshly linked nati
     page.respondLinks(page.fixture(false, { links: [link], servers: [{ id: page.serverId, name: 'fixed', template: false, link_revision: 8 }] }), 200, refresh);
     assert.deepEqual(page.workspace.nativeSelections, ['lxc/252']);
     assert.deepEqual(menus, ['pve-komodo-guest-docker']);
-    assert.equal(page.config.pveKomodoGuestBase, '/pve-komodo/api/servers/' + page.serverId, 'routing replaces a card rather than mutating its closed-over target');
+    assert.equal(page.config.pveKomodoGuestBase, '/pve-plugins/api/komodo/servers/' + page.serverId, 'routing replaces a card rather than mutating its closed-over target');
 });
 
 test('a summary unlink switches every server card to the independent route after authoritative links confirm removal', () => {
     const page = summaryLinksPage({ direct: false, linked: true }); page.ready(); page.pressLink('unlink');
     assert.match(page.browser.Ext.dialogs.at(-1).options.message, /仅删除本扩展中的映射/);
     page.answer('yes'); const post = page.browser.Ext.guestRequests.at(-1);
-    assert.equal(post.url, '/pve-komodo/api/guest-links/unlink');
+    assert.equal(post.url, '/pve-plugins/api/komodo/guest-links/unlink');
     assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { server_id: page.serverId, expected_revision: 7 });
     page.respondLinks({ removed: true, revision: 8 }, 200, post);
     assert.equal(page.workspace.content, undefined, 'wait for a fresh binding snapshot');
@@ -3948,8 +3948,8 @@ test('a summary unlink switches every server card to the independent route after
     assert.equal(target.pveKomodoServerPage, true); assert.equal(target.pveKomodoServerId, page.serverId);
     assert.deepEqual(Array.from(target.items, (card) => card.title), ['Docker', '选项', 'DOCKER', '资源', '终端']);
     assert.ok(target.items.every((card) => card.pveKomodoDirectServer === page.serverId));
-    assert.equal(target.items[0].pveKomodoGuestBase, '/pve-komodo/api/servers/' + page.serverId);
-    assert.equal(target.items[1].pveKomodoOptionsPath, '/pve-komodo/api/servers/' + page.serverId + '/options');
+    assert.equal(target.items[0].pveKomodoGuestBase, '/pve-plugins/api/komodo/servers/' + page.serverId);
+    assert.equal(target.items[1].pveKomodoOptionsPath, '/pve-plugins/api/komodo/servers/' + page.serverId + '/options');
     assert.equal(target.items[2].pveKomodoGuestBase, target.items[0].pveKomodoGuestBase);
     assert.equal(target.items[4].pveKomodoStackPath, target.items[0].pveKomodoGuestBase);
 });
@@ -4012,7 +4012,7 @@ test('a summary metadata write refreshes its owning container tree while retaini
     const reads = page.browser.Ext.requests.length, linkReads = page.browser.Ext.guestRequests.filter((request) => request.method === 'GET').length;
     page.respondLinks({ link: { server_id: page.serverId, guest_type: 'lxc', vmid: 252, status: 'linked', revision: 8 } }, 200, post);
     assert.equal(page.browser.Ext.requests.length, reads + 1);
-    assert.equal(page.browser.Ext.requests.at(-1).url, '/pve-komodo/api/containers');
+    assert.equal(page.browser.Ext.requests.at(-1).url, '/pve-plugins/api/komodo/containers');
     assert.equal(page.browser.Ext.guestRequests.filter((request) => request.method === 'GET').length, linkReads + 2,
         'the owning tree and current summary independently reload authoritative link snapshots');
     assert.deepEqual(page.workspace.nativeSelections, [], 'tree refresh does not infer navigation from a write receipt');

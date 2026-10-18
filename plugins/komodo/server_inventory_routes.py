@@ -70,7 +70,7 @@ def register_server_inventory_routes(application, config, authenticator, komodo,
         if not valid_server_target(request, guest_type, vmid):
             raise HTTPException(422, "invalid_inventory_guest")
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 
@@ -91,15 +91,15 @@ def register_server_inventory_routes(application, config, authenticator, komodo,
         except TimeoutError:
             raise HTTPException(504, "inventory_timeout") from None
 
-    @application.get("/pve-komodo/api/guests/{guest_type}/{vmid}/docker")
+    @application.get("/pve-plugins/api/komodo/guests/{guest_type}/{vmid}/docker")
     async def docker(request: Request, guest_type: str, vmid: str):
         return await read(request, guest_type, vmid, "docker")
 
-    @application.get("/pve-komodo/api/guests/{guest_type}/{vmid}/resources")
+    @application.get("/pve-plugins/api/komodo/guests/{guest_type}/{vmid}/resources")
     async def resources(request: Request, guest_type: str, vmid: str):
         return await read(request, guest_type, vmid, "resources")
 
-    @application.post("/pve-komodo/api/guests/{guest_type}/{vmid}/inventory-actions")
+    @application.post("/pve-plugins/api/komodo/guests/{guest_type}/{vmid}/inventory-actions")
     async def execute(request: Request, guest_type: str, vmid: str):
         try:
             async with asyncio.timeout(20):
@@ -167,15 +167,15 @@ def register_server_inventory_routes(application, config, authenticator, komodo,
         return JSONResponse(result, status_code=status)
 
 
-    @application.get("/pve-komodo/api/servers/{server_id}/docker")
+    @application.get("/pve-plugins/api/komodo/servers/{server_id}/docker")
     async def direct_docker(request: Request, server_id: str):
         return await read(request, DIRECT_SERVER, server_id, "docker")
 
-    @application.get("/pve-komodo/api/servers/{server_id}/resources")
+    @application.get("/pve-plugins/api/komodo/servers/{server_id}/resources")
     async def direct_resources(request: Request, server_id: str):
         return await read(request, DIRECT_SERVER, server_id, "resources")
 
-    @application.post("/pve-komodo/api/servers/{server_id}/inventory-actions")
+    @application.post("/pve-plugins/api/komodo/servers/{server_id}/inventory-actions")
     async def direct_execute(request: Request, server_id: str):
         return await execute(request, DIRECT_SERVER, server_id)
 

@@ -19,8 +19,8 @@ from fastapi import HTTPException, Request
 _TOKEN = re.compile(r"v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})\Z")
 _BINDING = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_TOKEN_LENGTH = 2048
-_COOKIE_DOMAIN = b"pve-komodo-csrf-cookie\0"
-_TOKEN_DOMAIN = b"pve-komodo-csrf-token\0"
+_COOKIE_DOMAIN = b"pve-plugins-csrf-cookie\0"
+_TOKEN_DOMAIN = b"pve-plugins-csrf-token\0"
 
 
 def _origin_error() -> HTTPException:

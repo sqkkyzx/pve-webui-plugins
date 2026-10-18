@@ -18,7 +18,7 @@ import plugins.komodo.server_inventory_routes as inventory_routes
 
 SERVER, OTHER, CONTAINER = "a" * 24, "b" * 24, "c" * 64
 VERSION = "d" * 64
-BASE = "/pve-komodo/api/servers/" + SERVER
+BASE = "/pve-plugins/api/komodo/servers/" + SERVER
 COOKIE = "PVEAuthCookie=test-ticket"
 
 
@@ -107,7 +107,7 @@ def direct(monkeypatch, tmp_path):
         response = client.get(BASE + "/summary", headers={"cookie": COOKIE})
         assert response.status_code == 200
         state.update(client=client, store=store, bind=bind, ledger=ledger,
-            headers={"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": response.json()["csrf_token"]})
+            headers={"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": response.json()["csrf_token"]})
         yield state
     store.close()
 
@@ -174,7 +174,7 @@ def test_binding_added_immediately_before_write_blocks_dispatch_and_is_receipted
 
 
 @pytest.mark.parametrize("kind", ["options", "description", "actions", "inventory-actions"])
-@pytest.mark.parametrize("field,value", [("cookie", "PVEAuthCookie=other"), ("origin", "https://evil.example"), ("x-pve-komodo-csrf", "forged")])
+@pytest.mark.parametrize("field,value", [("cookie", "PVEAuthCookie=other"), ("origin", "https://evil.example"), ("x-pve-plugins-csrf", "forged")])
 def test_direct_writes_authenticate_before_using_komodo(direct, kind, field, value):
     direct["reads"].clear()
     response = direct["client"].post(BASE + "/" + kind, headers={**direct["headers"], field: value}, json=command(kind))
@@ -183,7 +183,7 @@ def test_direct_writes_authenticate_before_using_komodo(direct, kind, field, val
 
 @pytest.mark.parametrize("kind", ["summary", "options", "docker", "resources", "terminal-services"])
 def test_guest_url_cannot_forge_standalone_context(direct, kind):
-    response = direct["client"].get("/pve-komodo/api/guests/server/" + SERVER + "/" + kind, headers={"cookie": COOKIE})
+    response = direct["client"].get("/pve-plugins/api/komodo/guests/server/" + SERVER + "/" + kind, headers={"cookie": COOKIE})
     assert response.status_code == 422
 
 

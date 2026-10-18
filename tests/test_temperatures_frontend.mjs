@@ -183,7 +183,7 @@ test('native status content, height and managed store updates survive independen
         ['cpu', 'memory', 'cpus', 'kernel', 'version', 'repositoryStatus']);
     assert.ok(page.status.items.indexOf(page.status.down('#pve-node-temperature-cpu')) < page.status.items.indexOf(page.status.down('#cpus')));
     assert.equal(ui.requests.length, 1);
-    assert.equal(ui.requests[0].options.url, '/pve-komodo/api/nodes/pve-test/temperatures');
+    assert.equal(ui.requests[0].options.url, '/pve-plugins/api/temperatures/nodes/pve-test');
     page.activate();
     assert.equal(ui.requests.length, 1, 'afterrender followed by native activate must not issue duplicate reads');
     ui.respond(snapshot([sensor('cpu0/package', 'cpu', 'Package id 0', 48)]));

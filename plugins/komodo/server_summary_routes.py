@@ -68,7 +68,7 @@ def register_server_summary_routes(application, config, authenticator, komodo, c
         if not valid_server_target(request, guest_type, vmid):
             raise HTTPException(422, "invalid_server_summary_guest")
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 
@@ -76,7 +76,7 @@ def register_server_summary_routes(application, config, authenticator, komodo, c
         await service.resolve(request, guest_type, access_identifier(guest_type, vmid), expected_server_id=binding["server_id"],
                               expected_revision=binding["binding_revision"])
 
-    @application.get("/pve-komodo/api/guests/{guest_type}/{vmid}/summary")
+    @application.get("/pve-plugins/api/komodo/guests/{guest_type}/{vmid}/summary")
     async def summary(request: Request, guest_type: str, vmid: str):
         try:
             async with asyncio.timeout(45):
@@ -90,7 +90,7 @@ def register_server_summary_routes(application, config, authenticator, komodo, c
         except TimeoutError:
             raise HTTPException(504, "server_summary_timeout") from None
 
-    @application.get("/pve-komodo/api/guests/{guest_type}/{vmid}/history")
+    @application.get("/pve-plugins/api/komodo/guests/{guest_type}/{vmid}/history")
     async def history(request: Request, guest_type: str, vmid: str):
         try:
             async with asyncio.timeout(45):
@@ -107,7 +107,7 @@ def register_server_summary_routes(application, config, authenticator, komodo, c
         except TimeoutError:
             raise HTTPException(504, "server_history_timeout") from None
 
-    @application.post("/pve-komodo/api/guests/{guest_type}/{vmid}/description")
+    @application.post("/pve-plugins/api/komodo/guests/{guest_type}/{vmid}/description")
     async def description(request: Request, guest_type: str, vmid: str):
         try:
             async with asyncio.timeout(20):
@@ -173,7 +173,7 @@ def register_server_summary_routes(application, config, authenticator, komodo, c
         status, result = await asyncio.shield(task)
         return JSONResponse(result, status_code=status)
 
-    @application.post("/pve-komodo/api/guests/{guest_type}/{vmid}/actions")
+    @application.post("/pve-plugins/api/komodo/guests/{guest_type}/{vmid}/actions")
     async def execute(request: Request, guest_type: str, vmid: str):
         try:
             async with asyncio.timeout(20):
@@ -249,18 +249,18 @@ def register_server_summary_routes(application, config, authenticator, komodo, c
         return JSONResponse(result, status_code=status)
 
 
-    @application.get("/pve-komodo/api/servers/{server_id}/summary")
+    @application.get("/pve-plugins/api/komodo/servers/{server_id}/summary")
     async def direct_summary(request: Request, server_id: str):
         return await summary(request, DIRECT_SERVER, server_id)
 
-    @application.get("/pve-komodo/api/servers/{server_id}/history")
+    @application.get("/pve-plugins/api/komodo/servers/{server_id}/history")
     async def direct_history(request: Request, server_id: str):
         return await history(request, DIRECT_SERVER, server_id)
 
-    @application.post("/pve-komodo/api/servers/{server_id}/description")
+    @application.post("/pve-plugins/api/komodo/servers/{server_id}/description")
     async def direct_description(request: Request, server_id: str):
         return await description(request, DIRECT_SERVER, server_id)
 
-    @application.post("/pve-komodo/api/servers/{server_id}/actions")
+    @application.post("/pve-plugins/api/komodo/servers/{server_id}/actions")
     async def direct_execute(request: Request, server_id: str):
         return await execute(request, DIRECT_SERVER, server_id)

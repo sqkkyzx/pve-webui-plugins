@@ -1,9 +1,9 @@
 {
   "id": "komodo",
   "name": "Komodo / Docker",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "api_version": 1,
   "entrypoint": "plugins.komodo.plugin:setup",
   "requires": [],
-  "assets": [{"source": "static/extension.js", "url": "/pve-komodo/assets/extension.js"}]
+  "assets": [{"source": "static/extension.js", "url": "/pve-plugins/assets/komodo/extension.js"}]
 }

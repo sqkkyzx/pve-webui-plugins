@@ -81,7 +81,7 @@ ID VM/CT名称 [Komodo服务器名称]
 
 PVE Cookie 只发给 PVE；Komodo key/secret 只发给固定 Core。浏览器不能提供任意 RPC、上游地址或 Mongo 查询。Komodo 资源是否可读、可执行、可写，仍由服务账号在 Core 的当前权限决定；PVE VM 权限不会自动转成 Komodo 操作权限。新建服务器还检查原生创建权限与 Core UI 禁写设置。
 
-写请求要求集成自己的 `X-PVE-Komodo-CSRF` token，并校验请求来源；PVE 原生 CSRF header 不能替代它。token 与 PVE 票据绑定，服务重启、票据变化或过期后需刷新取得新 token。终端的授权和 WebSocket 打开也执行会话、来源与 token 校验。
+写请求要求集成自己的 `X-PVE-Plugins-CSRF` token，并校验请求来源；PVE 原生 CSRF header 不能替代它。token 与 PVE 票据绑定，服务重启、票据变化或过期后需刷新取得新 token。终端的授权和 WebSocket 打开也执行会话、来源与 token 校验。
 
 - 资源操作先确认全部目标，再按固定 ID 派发；最多选择 50 个目标，写前复核权限、状态及适用的版本或关联修订号。
 - 操作、配置保存和新建使用 UUID 与持久化回执防止重复执行；终端使用一次性授权，并在建立会话前登记 UUID 账本。关联元数据使用 SQLite 事务及修订号防止覆盖旧状态。
@@ -97,21 +97,21 @@ PVE Cookie 只发给 PVE；Komodo key/secret 只发给固定 Core。浏览器不
 
 | 路径 | 方法与用途 |
 | --- | --- |
-| `/pve-komodo/health` | `GET`，服务存活检查 |
-| `/pve-komodo/api/session`、`/pve-komodo/api/connection` | `GET`，集成会话与 Core 连接检查 |
-| `/pve-komodo/api/dashboard`、`/pve-komodo/api/containers` | `GET`，首页与跨服务器容器列表 |
-| `/pve-komodo/api/alerts`、`/pve-komodo/api/updates`、`/pve-komodo/api/updates/{id}` | `GET`，固定筛选的告警、操作和操作详情 |
-| `/pve-komodo/api/action` | `POST`，数据中心固定批次动作 |
-| `/pve-komodo/api/guest-links` | `GET` 关联及候选列表，`POST` 确认关联 |
-| `/pve-komodo/api/guest-links/unlink` | `POST`，按修订号解除映射 |
-| `/pve-komodo/api/server-create-options`、`/pve-komodo/api/servers/create` | 分别为 `GET` 创建权限与候选，`POST` 新建服务器 |
+| `/pve-plugins/health` | `GET`，服务存活检查 |
+| `/pve-plugins/api/session`、`/pve-plugins/api/komodo/connection` | `GET`，集成会话与 Core 连接检查 |
+| `/pve-plugins/api/komodo/dashboard`、`/pve-plugins/api/komodo/containers` | `GET`，首页与跨服务器容器列表 |
+| `/pve-plugins/api/komodo/alerts`、`/pve-plugins/api/komodo/updates`、`/pve-plugins/api/komodo/updates/{id}` | `GET`，固定筛选的告警、操作和操作详情 |
+| `/pve-plugins/api/komodo/action` | `POST`，数据中心固定批次动作 |
+| `/pve-plugins/api/komodo/guest-links` | `GET` 关联及候选列表，`POST` 确认关联 |
+| `/pve-plugins/api/komodo/guest-links/unlink` | `POST`，按修订号解除映射 |
+| `/pve-plugins/api/komodo/server-create-options`、`/pve-plugins/api/komodo/servers/create` | 分别为 `GET` 创建权限与候选，`POST` 新建服务器 |
 | 服务器基础路径 + `/summary`、`/history`、`/options`、`/docker`、`/resources` | `GET`，服务器各页数据 |
 | 服务器基础路径 + `/options`、`/description`、`/actions`、`/inventory-actions` | `POST`，配置、描述与固定动作 |
-| `/pve-komodo/api/stacks/{stack_id}` | `GET` 应用栈详情，`POST` 部分配置或文件保存；另有 `GET /logs` 和 `POST /actions` |
-| `/pve-komodo/api/servers/{server_id}/containers/{container_id}` | `GET` 容器详情，`POST` 共享服务器描述；另有 `GET /logs`、`GET /inspect` 和 `POST /actions` |
+| `/pve-plugins/api/komodo/stacks/{stack_id}` | `GET` 应用栈详情，`POST` 部分配置或文件保存；另有 `GET /logs` 和 `POST /actions` |
+| `/pve-plugins/api/komodo/servers/{server_id}/containers/{container_id}` | `GET` 容器详情，`POST` 共享服务器描述；另有 `GET /logs`、`GET /inspect` 和 `POST /actions` |
 | 服务器、应用栈或容器基础路径 + `/terminal-services`、`/terminals`、`/terminals/ws` | 分别为 `GET` 终端选项、`POST` 一次性授权和 `WS` 交互会话 |
 
-服务器基础路径在已关联时为 `/pve-komodo/api/guests/{qemu或lxc}/{vmid}`，未关联时为 `/pve-komodo/api/servers/{server_id}`。接口查询字段、JSON 字段和数量均有固定校验；资源版本或关联修订不匹配时返回冲突，不能以改传另一个 ID 绕过。
+服务器基础路径在已关联时为 `/pve-plugins/api/komodo/guests/{qemu或lxc}/{vmid}`，未关联时为 `/pve-plugins/api/komodo/servers/{server_id}`。接口查询字段、JSON 字段和数量均有固定校验；资源版本或关联修订不匹配时返回冲突，不能以改传另一个 ID 绕过。
 
 ### VM/CT 关联与独立服务器
 
@@ -126,4 +126,4 @@ PVE Cookie 只发给 PVE；Komodo key/secret 只发给固定 Core。浏览器不
 正常解绑仅释放映射。已删除或不可访问服务器留下的孤立映射，可在关联窗口明确执行“解除失效关联”；清理不会自动关联当前服务器或跳转到另一台服务器。
 
 
-部署與插件選擇見[主文件](../README.md)。本文件中的既有路徑保持相容；Komodo 插件停用時，對應業務 API 不會註冊。
+部署與插件選擇見[主文件](../README.md)。Komodo 插件停用時，對應業務 API 不會註冊。

@@ -141,12 +141,12 @@ def test_shutdown_finishes_disconnected_action_and_receipt_before_closing_pool(m
         shutdown = None
         try:
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application), base_url="http://testserver") as client:
-                response = await client.get("/pve-komodo/api/dashboard", headers={"cookie": "PVEAuthCookie=test-ticket"})
+                response = await client.get("/pve-plugins/api/komodo/dashboard", headers={"cookie": "PVEAuthCookie=test-ticket"})
                 assert response.status_code == 200
-                request = asyncio.create_task(client.post("/pve-komodo/api/action", headers={
+                request = asyncio.create_task(client.post("/pve-plugins/api/komodo/action", headers={
                     "cookie": "PVEAuthCookie=test-ticket",
                     "origin": "http://testserver",
-                    "x-pve-komodo-csrf": response.json()["csrf_token"],
+                    "x-pve-plugins-csrf": response.json()["csrf_token"],
                 }, json={"section": "servers", "action": "prune_images", "ids": [identifier], "request_id": str(uuid4())}))
                 await asyncio.wait_for(started.wait(), timeout=2)
                 request.cancel()

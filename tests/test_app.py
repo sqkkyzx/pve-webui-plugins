@@ -4,7 +4,12 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
-from app.main import EXTENSION_PATH, SITE_EXTENSION_PATH, TEMPERATURE_EXTENSION_PATH, Settings, create_app
+from app.main import Settings, create_app
+
+
+EXTENSION_PATH = "/pve-plugins/assets/komodo/extension.js"
+TEMPERATURE_EXTENSION_PATH = "/pve-plugins/assets/temperatures/temperatures.js"
+SITE_EXTENSION_PATH = "/pve-plugins/assets/sites/sites.js"
 
 
 # The relevant structure of PVE's desktop template. All identity fields must
@@ -23,7 +28,7 @@ Ext.onReady(function() { Ext.create('PVE.StdWorkspace');});
 
 def client_for(handler, *, enabled=True):
     return TestClient(create_app(
-        Settings("https://pve.example:8006", extension_enabled=enabled),
+        Settings("https://pve.example:8006", injection_enabled=enabled),
         transport=httpx.MockTransport(handler),
     ))
 
@@ -45,7 +50,7 @@ def test_inject_after_dependencies_before_workspace_and_preserve_session():
         headers={"cookie": "PVEAuthCookie=alice-ticket; PVELangCookie=zh_CN", "if-none-match": "old"},
     )
     assert response.status_code == 200
-    assert response.headers["x-pve-komodo-extension"] == "enabled"
+    assert response.headers["x-pve-plugins-extension"] == "enabled"
     body = response.content
     assert body.index(b"pvemanagerlib.js") < body.index(EXTENSION_PATH.encode()) < body.index(b"Ext.onReady")
     assert body.count(EXTENSION_PATH.encode()) == 1
@@ -61,14 +66,14 @@ def test_inject_after_dependencies_before_workspace_and_preserve_session():
 def test_console_and_mobile_are_passed_through(query):
     response = client_for(lambda request: html_response()).get("/?" + query)
     assert response.content == DESKTOP
-    assert response.headers["x-pve-komodo-extension"] == "console-or-mobile"
+    assert response.headers["x-pve-plugins-extension"] == "console-or-mobile"
 
 
-@pytest.mark.parametrize("enabled,query", [(False, ""), (True, "?pve-komodo=off")])
+@pytest.mark.parametrize("enabled,query", [(False, ""), (True, "?pve-plugins=off")])
 def test_disable_and_browser_escape_hatch(enabled, query):
     response = client_for(lambda request: html_response(), enabled=enabled).get("/" + query)
     assert response.content == DESKTOP
-    assert response.headers["x-pve-komodo-extension"] == "disabled"
+    assert response.headers["x-pve-plugins-extension"] == "disabled"
 
 
 @pytest.mark.parametrize("body", [
@@ -81,14 +86,14 @@ def test_disable_and_browser_escape_hatch(enabled, query):
 def test_unknown_templates_are_unchanged(body):
     response = client_for(lambda request: html_response(body)).get("/")
     assert response.content == body
-    assert response.headers["x-pve-komodo-extension"] == "unsupported-page"
+    assert response.headers["x-pve-plugins-extension"] == "unsupported-page"
 
 
 def test_no_duplicate_injection():
     first = client_for(lambda request: html_response()).get("/").content
     response = client_for(lambda request: html_response(first)).get("/")
     assert response.content == first
-    assert response.headers["x-pve-komodo-extension"] == "already-present"
+    assert response.headers["x-pve-plugins-extension"] == "already-present"
 
 
 def test_upstream_cookies_are_not_reused_for_other_visitors():
@@ -158,7 +163,7 @@ def test_no_generic_api_or_open_proxy_and_health_does_not_contact_pve():
         pytest.fail("this route must not contact PVE")
 
     client = client_for(unexpected)
-    assert client.get("/pve-komodo/health").json()["status"] == "ok"
+    assert client.get("/pve-plugins/health").json()["status"] == "ok"
     assert client.get(EXTENSION_PATH).status_code == 200
     assert "Docker" in client.get(EXTENSION_PATH).text
     assert client.get(TEMPERATURE_EXTENSION_PATH).status_code == 200
@@ -169,7 +174,7 @@ def test_no_generic_api_or_open_proxy_and_health_does_not_contact_pve():
     assert "ViewSelector" in client.get(SITE_EXTENSION_PATH).text
     assert client.get("/api2/json/cluster/resources").status_code == 404
     assert client.post("/").status_code == 405
-    assert client.get("/pve-komodo/assets/../app/main.py").status_code == 404
+    assert client.get("/pve-plugins/assets/../app/main.py").status_code == 404
 
 
 @pytest.mark.parametrize("value", [
@@ -183,14 +188,14 @@ def test_upstream_is_fixed_https_origin(value):
 
 def test_temperature_route_is_registered_without_komodo_configuration():
     client = client_for(lambda request: pytest.fail("anonymous request must not reach PVE"))
-    response = client.get("/pve-komodo/api/nodes/pve-a/temperatures")
+    response = client.get("/pve-plugins/api/temperatures/nodes/pve-a")
     assert response.status_code == 401
     assert response.headers["cache-control"] == "private, no-store"
 
 
 def test_temperature_source_path_from_environment(monkeypatch):
     monkeypatch.setenv("PVE_UPSTREAM", "https://pve.example:8006")
-    monkeypatch.setenv("PVE_TEMPERATURE_SOURCES_FILE", "/run/temperatures/sources.json")
+    monkeypatch.setenv("PVE_TEMPERATURES_SOURCES_FILE", "/run/temperatures/sources.json")
     assert Settings.from_env().temperature_sources_file == "/run/temperatures/sources.json"
 
 
@@ -234,7 +239,7 @@ def test_real_collector_contract_reaches_the_main_app_without_komodo(tmp_path):
         with TestClient(application) as browser:
             cookie = "PVEAuthCookie=" + quote("PVE:root@pam:1234ABCD::fixturesignature=", safe="")
             for _ in range(2):
-                response = browser.get("/pve-komodo/api/nodes/pve-a/temperatures", headers={"cookie": cookie})
+                response = browser.get("/pve-plugins/api/temperatures/nodes/pve-a", headers={"cookie": cookie})
                 assert response.status_code == 200
                 assert response.json()["status"] == "ok"
                 assert response.json()["sensors"][0]["celsius"] == 0

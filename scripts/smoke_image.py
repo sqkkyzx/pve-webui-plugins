@@ -13,9 +13,9 @@ from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGINS = {
-    "komodo": ("/pve-komodo/api/connection", "/pve-komodo/assets/extension.js", "extension.js"),
-    "temperatures": ("/pve-komodo/api/nodes/pve-a/temperatures", "/pve-komodo/assets/temperatures.js", "temperatures.js"),
-    "sites": ("/pve-komodo/api/sites", "/pve-komodo/assets/sites.js", "sites.js"),
+    "komodo": ("/pve-plugins/api/komodo/connection", "/pve-plugins/assets/komodo/extension.js", "extension.js"),
+    "temperatures": ("/pve-plugins/api/temperatures/nodes/pve-a", "/pve-plugins/assets/temperatures/temperatures.js", "temperatures.js"),
+    "sites": ("/pve-plugins/api/sites", "/pve-plugins/assets/sites/sites.js", "sites.js"),
 }
 
 
@@ -38,7 +38,7 @@ def verify(image, selected):
            "--tmpfs", "/run/pve-webui-plugins:rw,noexec,nosuid,size=1m,uid=10001,gid=10001,mode=0700",
            "--tmpfs", "/app/data:rw,noexec,nosuid,size=1m,uid=10001,gid=10001,mode=0700",
            "--publish", "127.0.0.1::8000", "--env", "PVE_UPSTREAM=https://pve.invalid:8006",
-           "--env", "PVE_ACTION_STATE_FILE=/app/data/actions.sqlite3",
+           "--env", "PVE_KOMODO_ACTION_STATE_FILE=/app/data/actions.sqlite3",
            "--env", "PVE_PLUGINS=" + ",".join(selected), image)
     try:
         port = docker("port", name, "8000/tcp").splitlines()[0].rpartition(":")[2]
@@ -54,7 +54,7 @@ def verify(image, selected):
         else:
             raise AssertionError("Container did not become healthy")
         assert json.loads(body)["plugins"] == list(selected)
-        assert fetch(base, "/pve-komodo/health")[0] == 200
+        assert fetch(base, "/pve-komodo/health")[0] == 404
         runtime = json.loads(docker("exec", name, "python", "-c", """
 import json, os
 from pathlib import Path

@@ -507,7 +507,7 @@ def register_stack_terminal_routes(application, config, authenticator, komodo, c
         user = await authenticator.authenticate(request)
         validate_target(request, stack_id)
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 
@@ -516,11 +516,11 @@ def register_stack_terminal_routes(application, config, authenticator, komodo, c
         if _ID.fullmatch(server_id) is None or _CONTAINER.fullmatch(container_id) is None or request.query_params:
             raise HTTPException(422, "invalid_terminal_target")
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 
-    @application.get("/pve-komodo/api/stacks/{stack_id}/terminal-services")
+    @application.get("/pve-plugins/api/komodo/stacks/{stack_id}/terminal-services")
     async def services(request: Request, stack_id: str):
         try:
             async with asyncio.timeout(45):
@@ -532,7 +532,7 @@ def register_stack_terminal_routes(application, config, authenticator, komodo, c
         except TimeoutError:
             raise HTTPException(504, "terminal_preflight_timeout") from None
 
-    @application.post("/pve-komodo/api/stacks/{stack_id}/terminals")
+    @application.post("/pve-plugins/api/komodo/stacks/{stack_id}/terminals")
     async def issue(request: Request, stack_id: str):
         try:
             async with asyncio.timeout(45):
@@ -557,7 +557,7 @@ def register_stack_terminal_routes(application, config, authenticator, komodo, c
         except TimeoutError:
             raise HTTPException(504, "terminal_preflight_timeout") from None
 
-    container_base = "/pve-komodo/api/servers/{server_id}/containers/{container_id}"
+    container_base = "/pve-plugins/api/komodo/servers/{server_id}/containers/{container_id}"
 
     @application.get(container_base + "/terminal-services")
     async def container_services(request: Request, server_id: str, container_id: str):
@@ -646,7 +646,7 @@ def register_stack_terminal_routes(application, config, authenticator, komodo, c
                 async with asyncio.timeout(3):
                     await socket.close(code=close_code)
 
-    @application.websocket("/pve-komodo/api/stacks/{stack_id}/terminals/ws")
+    @application.websocket("/pve-plugins/api/komodo/stacks/{stack_id}/terminals/ws")
     async def terminal(socket: WebSocket, stack_id: str):
         await terminal_socket(socket, stack_id=stack_id)
 
@@ -742,14 +742,14 @@ def register_server_terminal_routes(application, config, authenticator, komodo, 
     service = ServerAccess(guest_store, PveGuestClient(
         config.upstream, verify=config.tls_context(), transport=transport))
     terminals = ServerTerminals(komodo, action_store, service, ws_connect=ws_connect)
-    base = "/pve-komodo/api/guests/{guest_type}/{vmid}"
+    base = "/pve-plugins/api/komodo/guests/{guest_type}/{vmid}"
 
     async def authorize(request, guest_type, vmid, *, write=False):
         user = await authenticator.authenticate(request)
         if request.query_params or not valid_server_target(request, guest_type, vmid):
             raise HTTPException(422, "invalid_terminal_target")
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 
@@ -839,15 +839,15 @@ def register_server_terminal_routes(application, config, authenticator, komodo, 
                 async with asyncio.timeout(3):
                     await socket.close(code=close_code)
 
-    @application.get("/pve-komodo/api/servers/{server_id}/terminal-services")
+    @application.get("/pve-plugins/api/komodo/servers/{server_id}/terminal-services")
     async def direct_server_services(request: Request, server_id: str):
         return await server_services(request, DIRECT_SERVER, server_id)
 
-    @application.post("/pve-komodo/api/servers/{server_id}/terminals")
+    @application.post("/pve-plugins/api/komodo/servers/{server_id}/terminals")
     async def direct_issue_server(request: Request, server_id: str):
         return await issue_server(request, DIRECT_SERVER, server_id)
 
-    @application.websocket("/pve-komodo/api/servers/{server_id}/terminals/ws")
+    @application.websocket("/pve-plugins/api/komodo/servers/{server_id}/terminals/ws")
     async def direct_server_terminal(socket: WebSocket, server_id: str):
         await server_terminal(socket, DIRECT_SERVER, server_id)
 

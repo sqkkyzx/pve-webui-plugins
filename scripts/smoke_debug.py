@@ -73,7 +73,7 @@ def verify(image):
             asset.write_text(asset.read_text() + "\n// debug-smoke-source-mount\n")
             digest = hashlib.sha256(asset.read_bytes()).hexdigest()[:16]
             wait_for(lambda: digest in generated("desktop-head.html"), "JavaScript and asset version")
-            assert fetch(base, "/pve-komodo/assets/sites.js")[1] == asset.read_bytes()
+            assert fetch(base, "/pve-plugins/assets/sites/sites.js")[1] == asset.read_bytes()
 
             manifest = source / "plugins/sites/plugin.json"
             data = json.loads(manifest.read_text())

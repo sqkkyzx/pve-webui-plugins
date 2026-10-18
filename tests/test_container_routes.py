@@ -12,7 +12,7 @@ from plugins.komodo.actions import KomodoActionError
 import plugins.komodo.container_routes as routes
 
 SERVER, CONTAINER, VERSION = "a" * 24, "e" * 64, "c" * 64
-PATH = f"/pve-komodo/api/servers/{SERVER}/containers/{CONTAINER}"
+PATH = f"/pve-plugins/api/komodo/servers/{SERVER}/containers/{CONTAINER}"
 COOKIE = {"cookie": "PVEAuthCookie=test-ticket"}
 
 
@@ -63,7 +63,7 @@ def boundary(monkeypatch, tmp_path):
         komodo_api_key="private-key", komodo_api_secret="private-secret", action_state_file=str(ledger))))
     response = client.get(PATH, headers=COOKIE)
     assert response.status_code == 200
-    state["headers"] = {**COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": response.json()["csrf_token"]}
+    state["headers"] = {**COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": response.json()["csrf_token"]}
     state["ledger"] = ledger
     return client, state
 
@@ -101,7 +101,7 @@ def test_valid_log_filters_and_exact_server_fullid_are_forwarded(boundary):
     assert client.get(PATH + "/inspect", headers=COOKIE).json()["inspect"]["Id"] == CONTAINER
 
 
-@pytest.mark.parametrize("headers", [COOKIE, {**COOKIE, "x-pve-komodo-csrf": "bad"}, {**COOKIE, "origin": "https://evil.example", "x-pve-komodo-csrf": "bad"}])
+@pytest.mark.parametrize("headers", [COOKIE, {**COOKIE, "x-pve-plugins-csrf": "bad"}, {**COOKIE, "origin": "https://evil.example", "x-pve-plugins-csrf": "bad"}])
 def test_csrf_and_cross_origin_rejects_writes(boundary, headers):
     client, state = boundary
     assert client.post(PATH, headers=headers, json=command()).status_code == 403

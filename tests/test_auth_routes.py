@@ -49,14 +49,15 @@ def pve_success(request):
 
 @pytest.mark.parametrize("route", ["session", "connection", "dashboard", "containers", "alerts", "updates", "updates/" + "a" * 24])
 def test_anonymous_request_is_denied_before_either_upstream(route):
-    response = client_for().get("/pve-komodo/api/" + route)
+    path = "/pve-plugins/api/session" if route == "session" else "/pve-plugins/api/komodo/" + route
+    response = client_for().get(path)
     assert response.status_code == 401
     assert response.headers["cache-control"] == "private, no-store"
     assert "test-secret" not in response.text
 
 
 def test_unlisted_user_denied_without_using_service_credentials():
-    response = client_for(allowed=()).get("/pve-komodo/api/connection", headers={"cookie": COOKIE})
+    response = client_for(allowed=()).get("/pve-plugins/api/komodo/connection", headers={"cookie": COOKIE})
     assert response.status_code == 403
     assert "no-store" in response.headers["cache-control"]
 
@@ -64,7 +65,7 @@ def test_unlisted_user_denied_without_using_service_credentials():
 @pytest.mark.parametrize("code,expected", [(401, 401), (403, 403), (500, 503), (302, 503)])
 def test_failed_pve_verification_never_calls_komodo(code, expected):
     response = client_for(pve=lambda request: httpx.Response(code, text="sensitive-upstream-body")).get(
-        "/pve-komodo/api/connection", headers={"cookie": COOKIE},
+        "/pve-plugins/api/komodo/connection", headers={"cookie": COOKIE},
     )
     assert response.status_code == expected
     assert "sensitive-upstream-body" not in response.text
@@ -72,14 +73,14 @@ def test_failed_pve_verification_never_calls_komodo(code, expected):
 
 
 def test_session_returns_verified_identity_without_connecting_komodo():
-    response = client_for(pve=pve_success).get("/pve-komodo/api/session", headers={"cookie": COOKIE})
+    response = client_for(pve=pve_success).get("/pve-plugins/api/session", headers={"cookie": COOKIE})
     assert response.status_code == 200
-    assert response.json() == {"user": "root@pam", "komodo_configured": True}
+    assert response.json() == {"user": "root@pam"}
 
 
 def test_unconfigured_status_is_available_only_after_pve_verification():
     response = client_for(pve=pve_success, configured=False).get(
-        "/pve-komodo/api/connection", headers={"cookie": COOKIE},
+        "/pve-plugins/api/komodo/connection", headers={"cookie": COOKIE},
     )
     assert response.json() == {
         "user": "root@pam", "komodo": {"configured": False, "connected": False},
@@ -102,7 +103,7 @@ def test_successful_connection_keeps_credentials_and_sessions_on_their_own_origi
         return httpx.Response(200, text="2.3.3")
 
     response = client_for(pve=pve_success, komodo=komodo).get(
-        "/pve-komodo/api/connection", headers={"cookie": COOKIE},
+        "/pve-plugins/api/komodo/connection", headers={"cookie": COOKIE},
     )
     assert response.status_code == 200
     assert response.json() == {"user": "root@pam", "komodo": {
@@ -118,7 +119,7 @@ def test_successful_connection_keeps_credentials_and_sessions_on_their_own_origi
 def test_invalid_komodo_credentials_return_safe_status_after_pve_verification():
     response = client_for(
         pve=pve_success, komodo=lambda request: httpx.Response(401, text="test-secret"),
-    ).get("/pve-komodo/api/connection", headers={"cookie": COOKIE})
+    ).get("/pve-plugins/api/komodo/connection", headers={"cookie": COOKIE})
     assert response.status_code == 200
     assert response.json()["komodo"] == {
         "configured": True, "connected": False, "error_code": "invalid_credentials",
@@ -128,7 +129,8 @@ def test_invalid_komodo_credentials_return_safe_status_after_pve_verification():
 
 @pytest.mark.parametrize("route", ["session", "connection", "dashboard", "containers", "alerts", "updates", "updates/" + "a" * 24])
 def test_no_write_endpoints(route):
-    response = client_for().post("/pve-komodo/api/" + route)
+    path = "/pve-plugins/api/session" if route == "session" else "/pve-plugins/api/komodo/" + route
+    response = client_for().post(path)
     assert response.status_code == 405
     assert "no-store" in response.headers["cache-control"]
 
@@ -136,8 +138,8 @@ def test_no_write_endpoints(route):
 def test_settings_load_new_environment_without_showing_credentials(monkeypatch):
     for name, value in {
         "PVE_UPSTREAM": "https://pve.example:8006", "PVE_ADMIN_USERS": "root@pam, alice@pve",
-        "KOMODO_URL": "http://core:9120", "KOMODO_API_KEY": "test-key",
-        "KOMODO_API_SECRET": "test-secret", "KOMODO_TLS_VERIFY": "false",
+        "PVE_KOMODO_URL": "http://core:9120", "PVE_KOMODO_API_KEY": "test-key",
+        "PVE_KOMODO_API_SECRET": "test-secret", "PVE_KOMODO_TLS_VERIFY": "false",
     }.items():
         monkeypatch.setenv(name, value)
     settings = Settings.from_env()
@@ -184,7 +186,7 @@ def test_dashboard_is_protected_and_returns_only_allowlisted_resource_fields(cap
         return httpx.Response(200, json=resources[kind])
 
     response = client_for(pve=pve_success, komodo=komodo).get(
-        "/pve-komodo/api/dashboard", headers={"cookie": COOKIE},
+        "/pve-plugins/api/komodo/dashboard", headers={"cookie": COOKIE},
     )
     assert response.status_code == 200
     data = response.json()
@@ -205,14 +207,14 @@ def test_dashboard_is_protected_and_returns_only_allowlisted_resource_fields(cap
 @pytest.mark.parametrize("code,expected", [(401, 401), (403, 403), (500, 503)])
 def test_dashboard_pve_failure_never_uses_service_account(code, expected):
     response = client_for(pve=lambda request: httpx.Response(code)).get(
-        "/pve-komodo/api/dashboard", headers={"cookie": COOKIE},
+        "/pve-plugins/api/komodo/dashboard", headers={"cookie": COOKIE},
     )
     assert response.status_code == expected
 
 
 def test_dashboard_not_configured_is_a_safe_error_after_authentication():
     response = client_for(pve=pve_success, configured=False).get(
-        "/pve-komodo/api/dashboard", headers={"cookie": COOKIE},
+        "/pve-plugins/api/komodo/dashboard", headers={"cookie": COOKIE},
     )
     assert response.status_code == 503
     assert response.json() == {"detail": "not_configured"}
@@ -227,7 +229,7 @@ def test_dashboard_total_deadline_cancels_slow_upstream_work(monkeypatch):
     monkeypatch.setattr("plugins.komodo.plugin.DASHBOARD_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr("plugins.komodo.plugin.KomodoClient.dashboard", slow_read)
     response = client_for(pve=pve_success).get(
-        "/pve-komodo/api/dashboard", headers={"cookie": COOKIE},
+        "/pve-plugins/api/komodo/dashboard", headers={"cookie": COOKIE},
     )
     assert response.status_code == 504
     assert response.json() == {"detail": "dashboard_timeout"}
@@ -242,26 +244,26 @@ def action_client(monkeypatch, *, perform=None):
     if perform is not None:
         monkeypatch.setattr("plugins.komodo.plugin.KomodoClient.perform_action", perform)
     client = client_for(pve=pve_success)
-    response = client.get("/pve-komodo/api/dashboard", headers={"cookie": COOKIE})
-    headers = {"cookie": COOKIE, "x-pve-komodo-csrf": response.json()["csrf_token"], "origin": "http://testserver"}
+    response = client.get("/pve-plugins/api/komodo/dashboard", headers={"cookie": COOKIE})
+    headers = {"cookie": COOKIE, "x-pve-plugins-csrf": response.json()["csrf_token"], "origin": "http://testserver"}
     payload = {"section": "servers", "action": "prune_images", "ids": ["a" * 24],
                "request_id": "11111111-1111-4111-8111-111111111111"}
     return client, headers, payload
 
 
 def test_action_requires_authenticated_session_before_any_other_work():
-    response = client_for().post("/pve-komodo/api/action", json={})
+    response = client_for().post("/pve-plugins/api/komodo/action", json={})
     assert response.status_code == 401
     assert "no-store" in response.headers["cache-control"]
 
 
 def test_action_requires_bound_csrf_and_same_origin_before_komodo(monkeypatch):
     client, headers, payload = action_client(monkeypatch)
-    assert client.post("/pve-komodo/api/action", headers={"cookie": COOKIE}, json=payload).status_code == 403
-    response = client.post("/pve-komodo/api/action", headers={**headers, "origin": "https://evil.example"}, json=payload)
+    assert client.post("/pve-plugins/api/komodo/action", headers={"cookie": COOKIE}, json=payload).status_code == 403
+    response = client.post("/pve-plugins/api/komodo/action", headers={**headers, "origin": "https://evil.example"}, json=payload)
     assert response.status_code == 403
     assert response.json() == {"detail": "invalid_write_origin"}
-    response = client.post("/pve-komodo/api/action", headers={**headers, "x-pve-komodo-csrf": "wrong"}, json=payload)
+    response = client.post("/pve-plugins/api/komodo/action", headers={**headers, "x-pve-plugins-csrf": "wrong"}, json=payload)
     assert response.json() == {"detail": "invalid_csrf_token"}
 
 
@@ -269,7 +271,7 @@ def test_action_requires_bound_csrf_and_same_origin_before_komodo(monkeypatch):
                                     {"url": "https://evil.example"}, {"request_id": "not-a-uuid"}])
 def test_action_rejects_arbitrary_targets_and_extra_rpc_parameters(monkeypatch, change):
     client, headers, payload = action_client(monkeypatch)
-    response = client.post("/pve-komodo/api/action", headers=headers, json={**payload, **change})
+    response = client.post("/pve-plugins/api/komodo/action", headers=headers, json={**payload, **change})
     assert response.status_code == 422
     assert response.json() == {"detail": "invalid_action_request"}
 
@@ -284,13 +286,13 @@ def test_action_executes_once_and_replays_its_safe_receipt(monkeypatch):
         ]}
 
     client, headers, payload = action_client(monkeypatch, perform=perform)
-    first = client.post("/pve-komodo/api/action", headers=headers, json=payload)
-    second = client.post("/pve-komodo/api/action", headers=headers, json=payload)
+    first = client.post("/pve-plugins/api/komodo/action", headers=headers, json=payload)
+    second = client.post("/pve-plugins/api/komodo/action", headers=headers, json=payload)
     assert first.status_code == second.status_code == 200
     assert first.json() == second.json()
     assert len(called) == 1
     assert "no-store" in first.headers["cache-control"]
-    conflict = client.post("/pve-komodo/api/action", headers=headers, json={**payload, "ids": ["c" * 24]})
+    conflict = client.post("/pve-plugins/api/komodo/action", headers=headers, json={**payload, "ids": ["c" * 24]})
     assert conflict.status_code == 409
     assert conflict.json() == {"detail": "idempotency_conflict"}
     assert len(called) == 1
@@ -304,11 +306,11 @@ def test_action_unexpected_failure_is_unknown_and_not_retried(monkeypatch):
         raise RuntimeError("secret-body-and-key")
 
     client, headers, payload = action_client(monkeypatch, perform=perform)
-    first = client.post("/pve-komodo/api/action", headers=headers, json=payload)
+    first = client.post("/pve-plugins/api/komodo/action", headers=headers, json=payload)
     assert first.status_code == 200
     assert first.json()["results"][0]["status"] == "outcome_unknown"
     assert "secret-body-and-key" not in first.text
-    client.post("/pve-komodo/api/action", headers=headers, json=payload)
+    client.post("/pve-plugins/api/komodo/action", headers=headers, json=payload)
     assert len(called) == 1
 
 
@@ -317,7 +319,7 @@ def test_action_origin_matches_https_nginx_even_with_http_upstream(monkeypatch):
         return {"section": section, "action": action, "results": []}
 
     client, headers, payload = action_client(monkeypatch, perform=perform)
-    response = client.post("/pve-komodo/api/action", headers={
+    response = client.post("/pve-plugins/api/komodo/action", headers={
         **headers, "origin": "https://testserver", "x-forwarded-proto": "https", "sec-fetch-site": "same-origin",
     }, json=payload)
     assert response.status_code == 200
@@ -335,11 +337,11 @@ def test_action_deduplication_survives_pve_ticket_renewal(monkeypatch):
 
     monkeypatch.setattr("app.main.PveAuthenticator.authenticate", authenticate)
     client, headers, payload = action_client(monkeypatch, perform=perform)
-    assert client.post("/pve-komodo/api/action", headers=headers, json=payload).status_code == 200
+    assert client.post("/pve-plugins/api/komodo/action", headers=headers, json=payload).status_code == 200
     renewed_cookie = COOKIE.replace("signature", "renewed-signature")
-    token = client.get("/pve-komodo/api/dashboard", headers={"cookie": renewed_cookie}).json()["csrf_token"]
-    response = client.post("/pve-komodo/api/action", headers={
-        **headers, "cookie": renewed_cookie, "x-pve-komodo-csrf": token,
+    token = client.get("/pve-plugins/api/komodo/dashboard", headers={"cookie": renewed_cookie}).json()["csrf_token"]
+    response = client.post("/pve-plugins/api/komodo/action", headers={
+        **headers, "cookie": renewed_cookie, "x-pve-plugins-csrf": token,
     }, json=payload)
     assert response.status_code == 200
     assert len(called) == 1
@@ -347,7 +349,7 @@ def test_action_deduplication_survives_pve_ticket_renewal(monkeypatch):
 
 def test_containers_read_requires_pve_verification_before_service_account():
     response = client_for(pve=lambda request: httpx.Response(401, text="private-rejection")).get(
-        "/pve-komodo/api/containers", headers={"cookie": COOKIE},
+        "/pve-plugins/api/komodo/containers", headers={"cookie": COOKIE},
     )
     assert response.status_code == 401
     assert "private-rejection" not in response.text
@@ -361,7 +363,7 @@ def test_containers_total_deadline_cancels_slow_read(monkeypatch):
 
     monkeypatch.setattr("plugins.komodo.plugin.DASHBOARD_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr("plugins.komodo.plugin.KomodoClient.containers", slow_read)
-    response = client_for(pve=pve_success).get("/pve-komodo/api/containers", headers={"cookie": COOKIE})
+    response = client_for(pve=pve_success).get("/pve-plugins/api/komodo/containers", headers={"cookie": COOKIE})
     assert response.status_code == 504
     assert response.json() == {"detail": "containers_timeout"}
     assert "no-store" in response.headers["cache-control"]
@@ -384,16 +386,16 @@ def test_containers_page_issues_session_csrf_and_uses_persistent_action_deduplic
     monkeypatch.setattr("plugins.komodo.plugin.KomodoClient.containers", read)
     monkeypatch.setattr("plugins.komodo.plugin.KomodoClient.perform_action", perform)
     client = client_for(pve=pve_success)
-    response = client.get("/pve-komodo/api/containers", headers={"cookie": COOKIE})
+    response = client.get("/pve-plugins/api/komodo/containers", headers={"cookie": COOKIE})
     assert response.status_code == 200
     assert response.json()["user"] == "root@pam"
     assert response.json()["containers"][0]["id"] == identifier
     assert "no-store" in response.headers["cache-control"]
-    headers = {"cookie": COOKIE, "x-pve-komodo-csrf": response.json()["csrf_token"], "origin": "http://testserver"}
+    headers = {"cookie": COOKIE, "x-pve-plugins-csrf": response.json()["csrf_token"], "origin": "http://testserver"}
     payload = {"section": "containers", "action": "start", "ids": [identifier.upper(), identifier],
                "request_id": "11111111-1111-4111-8111-111111111111"}
-    first = client.post("/pve-komodo/api/action", headers=headers, json=payload)
-    replay = client.post("/pve-komodo/api/action", headers=headers, json=payload)
+    first = client.post("/pve-plugins/api/komodo/action", headers=headers, json=payload)
+    replay = client.post("/pve-plugins/api/komodo/action", headers=headers, json=payload)
     assert first.status_code == replay.status_code == 200
     assert first.json() == replay.json()
     assert called == [("containers", "start", [identifier])]
@@ -409,7 +411,7 @@ def test_containers_page_issues_session_csrf_and_uses_persistent_action_deduplic
 ])
 def test_container_action_rejects_names_short_ids_and_cross_section_ids(monkeypatch, section, identifiers):
     client, headers, payload = action_client(monkeypatch)
-    response = client.post("/pve-komodo/api/action", headers=headers, json={**payload, "section": section, "ids": identifiers})
+    response = client.post("/pve-plugins/api/komodo/action", headers=headers, json={**payload, "section": section, "ids": identifiers})
     assert response.status_code == 422
     assert response.json() == {"detail": "invalid_action_request"}
 
@@ -424,7 +426,7 @@ def test_alerts_route_forwards_only_validated_filters_after_authentication(monke
 
     monkeypatch.setattr("plugins.komodo.plugin.KomodoClient.alerts", read)
     client = client_for(pve=pve_success)
-    response = client.get("/pve-komodo/api/alerts", params={
+    response = client.get("/pve-plugins/api/komodo/alerts", params={
         "page": 2, "resource_type": "Stack", "alert_type": "StackStateChange", "unresolved_only": "true",
     }, headers={"cookie": COOKIE})
     assert response.status_code == 200
@@ -442,7 +444,7 @@ def test_alerts_route_forwards_only_validated_filters_after_authentication(monke
     "unresolved_only=1", "unresolved_only=false&unresolved_only=true",
 ])
 def test_alert_query_rejects_mongo_unknown_and_ambiguous_filters_before_komodo(query):
-    response = client_for(pve=pve_success).get("/pve-komodo/api/alerts?" + query, headers={"cookie": COOKIE})
+    response = client_for(pve=pve_success).get("/pve-plugins/api/komodo/alerts?" + query, headers={"cookie": COOKIE})
     assert response.status_code == 422
     assert response.json() == {"detail": "invalid_alert_query"}
     assert "private-test" not in response.text
@@ -450,7 +452,7 @@ def test_alert_query_rejects_mongo_unknown_and_ambiguous_filters_before_komodo(q
 
 
 def test_alert_query_is_not_processed_before_pve_authentication():
-    response = client_for().get("/pve-komodo/api/alerts?query=arbitrary")
+    response = client_for().get("/pve-plugins/api/komodo/alerts?query=arbitrary")
     assert response.status_code == 401
 
 
@@ -461,7 +463,7 @@ def test_alerts_route_total_deadline_cancels_slow_read(monkeypatch):
 
     monkeypatch.setattr("plugins.komodo.plugin.DASHBOARD_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr("plugins.komodo.plugin.KomodoClient.alerts", slow_read)
-    response = client_for(pve=pve_success).get("/pve-komodo/api/alerts", headers={"cookie": COOKIE})
+    response = client_for(pve=pve_success).get("/pve-plugins/api/komodo/alerts", headers={"cookie": COOKIE})
     assert response.status_code == 504
     assert response.json() == {"detail": "alerts_timeout"}
     assert "no-store" in response.headers["cache-control"]
@@ -476,7 +478,7 @@ def test_updates_route_accepts_only_fixed_filters_after_authentication(monkeypat
                 "next_page": None, "updated_at": "2026-10-17T00:00:00Z", "errors": []}
 
     monkeypatch.setattr("plugins.komodo.plugin.KomodoClient.updates", read)
-    response = client_for(pve=pve_success).get("/pve-komodo/api/updates", params={
+    response = client_for(pve=pve_success).get("/pve-plugins/api/komodo/updates", params={
         "page": 2, "resource_type": "Server", "operation": "RestartAllContainers",
     }, headers={"cookie": COOKIE})
     assert response.status_code == 200
@@ -493,7 +495,7 @@ def test_updates_route_accepts_only_fixed_filters_after_authentication(monkeypat
     "operation=RestartAllContainers&operation=StopAllContainers", "_dc=123",
 ])
 def test_updates_route_rejects_unknown_and_ambiguous_queries_before_komodo(query):
-    response = client_for(pve=pve_success).get("/pve-komodo/api/updates?" + query, headers={"cookie": COOKIE})
+    response = client_for(pve=pve_success).get("/pve-plugins/api/komodo/updates?" + query, headers={"cookie": COOKIE})
     assert response.status_code == 422
     assert response.json() == {"detail": "invalid_update_query"}
     assert "private-test" not in response.text
@@ -508,8 +510,8 @@ def test_update_details_route_authorizes_before_validating_id_and_preserves_time
                 "updated_at": "2026-10-17T00:00:00Z", "errors": []}
 
     monkeypatch.setattr("plugins.komodo.plugin.KomodoClient.update_details", details)
-    assert client_for().get("/pve-komodo/api/updates/not-an-id").status_code == 401
-    response = client_for(pve=pve_success).get("/pve-komodo/api/updates/" + "A" * 24, headers={"cookie": COOKIE})
+    assert client_for().get("/pve-plugins/api/komodo/updates/not-an-id").status_code == 401
+    response = client_for(pve=pve_success).get("/pve-plugins/api/komodo/updates/" + "A" * 24, headers={"cookie": COOKIE})
     assert response.status_code == 200
     assert response.json()["update"]["end_ts"] - response.json()["update"]["start_ts"] == 123
     assert calls == ["a" * 24]
@@ -518,7 +520,7 @@ def test_update_details_route_authorizes_before_validating_id_and_preserves_time
 
 @pytest.mark.parametrize("path", ["not-an-id", "a" * 23, "g" * 24, "a" * 24 + "?url=https://other.invalid"])
 def test_update_details_rejects_names_and_extra_parameters_before_komodo(path):
-    response = client_for(pve=pve_success).get("/pve-komodo/api/updates/" + path, headers={"cookie": COOKIE})
+    response = client_for(pve=pve_success).get("/pve-plugins/api/komodo/updates/" + path, headers={"cookie": COOKIE})
     assert response.status_code == 422
     assert response.json() == {"detail": "invalid_update_id"}
 
@@ -534,7 +536,7 @@ def test_update_reads_have_total_deadlines(monkeypatch, kind, method, expected):
 
     monkeypatch.setattr("plugins.komodo.plugin.DASHBOARD_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr("plugins.komodo.plugin.KomodoClient." + method, slow_read)
-    response = client_for(pve=pve_success).get("/pve-komodo/api/" + kind, headers={"cookie": COOKIE})
+    response = client_for(pve=pve_success).get("/pve-plugins/api/komodo/" + kind, headers={"cookie": COOKIE})
     assert response.status_code == 504
     assert response.json() == {"detail": expected}
 
@@ -545,6 +547,6 @@ def test_update_reads_have_total_deadlines(monkeypatch, kind, method, expected):
     *[("post", "servers/" + "a" * 24 + "/" + section) for section in ["description", "actions", "options", "inventory-actions", "terminals"]],
 ])
 def test_create_app_registers_server_creation_and_unlinked_server_routes_with_auth(method, route):
-    response = getattr(client_for(), method)("/pve-komodo/api/" + route)
+    response = getattr(client_for(), method)("/pve-plugins/api/komodo/" + route)
     assert response.status_code == 401
     assert response.headers["cache-control"] == "private, no-store"

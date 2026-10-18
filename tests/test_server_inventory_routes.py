@@ -19,7 +19,7 @@ import plugins.komodo.server_inventory_routes as routes
 
 
 SERVER, CONTAINER, VERSION = "a" * 24, "b" * 64, "c" * 64
-BASE = "/pve-komodo/api/guests/qemu/101"
+BASE = "/pve-plugins/api/komodo/guests/qemu/101"
 COOKIE = "PVEAuthCookie=test-ticket"
 
 
@@ -70,7 +70,7 @@ def boundary(monkeypatch, tmp_path):
         komodo_api_key="key", komodo_api_secret="secret", action_state_file=str(ledger))))
     result = client.get(BASE + "/docker", headers={"cookie": COOKIE})
     assert result.status_code == 200
-    state["headers"] = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": result.json()["csrf_token"]}
+    state["headers"] = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": result.json()["csrf_token"]}
     state["ledger"] = ledger
     return client, state
 
@@ -103,7 +103,7 @@ def test_binding_changed_during_read_does_not_publish_stale_server_inventory(bou
 @pytest.mark.parametrize("context", ["node/101", "qemu/0101", "qemu/99", "qemu/1000000000"])
 def test_guest_type_vmid_are_strict_before_dispatch(boundary, context):
     client, state = boundary
-    prefix = "/pve-komodo/api/guests/" + context
+    prefix = "/pve-plugins/api/komodo/guests/" + context
     for kind in ("docker", "resources"):
         assert client.get(prefix + "/" + kind, headers={"cookie": COOKIE}).status_code == 422
     assert client.post(prefix + "/inventory-actions", headers=state["headers"], json=command()).status_code == 422
@@ -118,7 +118,7 @@ def test_no_query_can_retarget_or_alter_inventory_semantics(boundary, query):
     assert not state["writes"]
 
 
-@pytest.mark.parametrize("header,value", [("x-pve-komodo-csrf", "bad"), ("origin", "https://evil.example"), ("cookie", "PVEAuthCookie=other-ticket")])
+@pytest.mark.parametrize("header,value", [("x-pve-plugins-csrf", "bad"), ("origin", "https://evil.example"), ("cookie", "PVEAuthCookie=other-ticket")])
 def test_every_write_requires_existing_session_csrf_and_same_origin(boundary, header, value):
     client, state = boundary
     response = client.post(BASE + "/inventory-actions", headers={**state["headers"], header: value}, json=command())
@@ -258,10 +258,10 @@ def test_full_transport_chain_verifies_pve_fingerprint_after_permissions_before_
         action_state_file=str(ledger), guest_links_file=str(tmp_path / "links.sqlite3")),
         pve_auth_transport=httpx.MockTransport(pve), komodo_transport=httpx.MockTransport(core))
     with TestClient(application) as browser:
-        listing = browser.get("/pve-komodo/api/guest-links", headers={"cookie": cookie})
+        listing = browser.get("/pve-plugins/api/komodo/guest-links", headers={"cookie": cookie})
         assert listing.status_code == 200
-        headers = {"cookie": cookie, "origin": "http://testserver", "x-pve-komodo-csrf": listing.json()["csrf_token"]}
-        binding = browser.post("/pve-komodo/api/guest-links", headers=headers, json={"server_id": SERVER,
+        headers = {"cookie": cookie, "origin": "http://testserver", "x-pve-plugins-csrf": listing.json()["csrf_token"]}
+        binding = browser.post("/pve-plugins/api/komodo/guest-links", headers=headers, json={"server_id": SERVER,
             "guest_type": "qemu", "vmid": 101, "expected_revision": 0})
         assert binding.status_code == 200
         opened = browser.get(BASE + "/docker", headers={"cookie": cookie})

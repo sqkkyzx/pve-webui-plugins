@@ -128,7 +128,7 @@ def load_temperature_sources(filename):
             sources[node] = TemperatureSource(origin, token, context, kind)
         return sources
     except Exception:
-        raise ValueError("Invalid PVE_TEMPERATURE_SOURCES_FILE configuration") from None
+        raise ValueError("Invalid PVE_TEMPERATURES_SOURCES_FILE configuration") from None
 
 
 def _label(value):

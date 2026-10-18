@@ -15,7 +15,7 @@ import plugins.komodo.stack_routes as routes
 STACK='a'*24
 SERVER='b'*24
 VERSION='c'*64
-PATH='/pve-komodo/api/stacks/'+STACK
+PATH='/pve-plugins/api/komodo/stacks/'+STACK
 COOKIE={'cookie':'PVEAuthCookie=test-ticket'}
 
 
@@ -54,7 +54,7 @@ def boundary(monkeypatch,tmp_path):
         komodo_api_key='private-key',komodo_api_secret='private-secret',action_state_file=str(ledger))))
     response=client.get(PATH,headers=COOKIE)
     assert response.status_code==200
-    state['headers']={**COOKIE,'origin':'http://testserver','x-pve-komodo-csrf':response.json()['csrf_token']}
+    state['headers']={**COOKIE,'origin':'http://testserver','x-pve-plugins-csrf':response.json()['csrf_token']}
     state['ledger']=ledger
     return client,state
 
@@ -93,8 +93,8 @@ def test_log_filters_accept_multiple_services_and_exact_boolean_values(boundary)
     assert params['search']=='error' and params['invert'] is True
 
 
-@pytest.mark.parametrize('headers',[COOKIE,{**COOKIE,'x-pve-komodo-csrf':'invalid'},
-    {**COOKIE,'origin':'https://attacker.example','x-pve-komodo-csrf':'invalid'}])
+@pytest.mark.parametrize('headers',[COOKIE,{**COOKIE,'x-pve-plugins-csrf':'invalid'},
+    {**COOKIE,'origin':'https://attacker.example','x-pve-plugins-csrf':'invalid'}])
 def test_csrf_and_origin_fail_closed(boundary,headers):
     client,state=boundary
     assert client.post(PATH,headers=headers,json=command()).status_code==403

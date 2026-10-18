@@ -15,7 +15,7 @@ def register_temperature_routes(application, settings, authenticator, *, transpo
     service = TemperatureService(load_temperature_sources(settings.temperature_sources_file), transport=transport)
     discovery = NodeTemperatureDiscovery(authenticator)
 
-    @application.get("/pve-komodo/api/nodes/{node}/temperatures")
+    @application.get("/pve-plugins/api/temperatures/nodes/{node}")
     async def temperatures(request: Request, node: str):
         try:
             # Keep authentication + discovery + scrape below the browser's

@@ -13,7 +13,7 @@ import plugins.temperatures.temperatures as temperatures
 PVE = "https://pve.example:8006"
 TICKET = "PVE:root@pam:1234ABCD::integration-signature="
 COOKIE = "PVEAuthCookie=" + quote(TICKET, safe="")
-PATH = "/pve-komodo/api/nodes/pve-a/temperatures"
+PATH = "/pve-plugins/api/temperatures/nodes/pve-a"
 NOW = 1_792_300_000
 METRICS = """# HELP node_hwmon_temp_celsius Hardware temperature
 # TYPE node_hwmon_temp_celsius gauge
@@ -32,7 +32,7 @@ def node(name="pve-a", ip="10.20.30.40", online=1):
 
 @pytest.fixture
 def integration(monkeypatch):
-    for key in ("PVE_TEMPERATURE_SOURCES_FILE", "KOMODO_URL", "KOMODO_API_KEY", "KOMODO_API_SECRET"):
+    for key in ("PVE_TEMPERATURES_SOURCES_FILE", "PVE_KOMODO_URL", "PVE_KOMODO_API_KEY", "PVE_KOMODO_API_SECRET"):
         monkeypatch.delenv(key, raising=False)
     state = {"events": [], "pve_requests": [], "metrics_requests": [], "nodes": [node()], "clock": 10.0,
              "auth_status": 200, "metrics_response": None, "discovery_response": None}
@@ -62,7 +62,7 @@ def integration(monkeypatch):
     def exporter(request):
         assert request.method == "GET" and request.url.scheme == "http" and request.url.port == 9100
         assert request.url.path == "/metrics" and dict(request.url.params) == {"collect[]": "hwmon"}
-        for header in ("cookie", "authorization", "x-api-key", "x-api-secret", "x-pve-komodo-csrf", "csrfpreventiontoken"):
+        for header in ("cookie", "authorization", "x-api-key", "x-api-secret", "x-pve-plugins-csrf", "csrfpreventiontoken"):
             assert header not in request.headers
         assert request.headers["accept-encoding"] == "identity"
         assert state["events"][-1] == "/api2/json/cluster/status", "discovery must be checked before every exporter read"
@@ -104,7 +104,7 @@ def test_default_discovery_without_komodo_or_temperature_configuration_preserves
 def test_browser_credentials_and_pve_cookie_never_reach_node_exporter(integration):
     _, state = integration
     response = state["get"](headers={"authorization": "Bearer browser-only", "x-api-key": "browser-key",
-                                      "x-pve-komodo-csrf": "browser-csrf", "csrfpreventiontoken": "pve-csrf"})
+                                      "x-pve-plugins-csrf": "browser-csrf", "csrfpreventiontoken": "pve-csrf"})
     assert response.json()["status"] == "ok"
     assert len(state["pve_requests"]) == 3 and len(state["metrics_requests"]) == 1
     for private in (COOKIE, TICKET, "browser-only", "browser-key", "browser-csrf", "must-not-cross-origin", "10.20.30.40"):

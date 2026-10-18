@@ -98,9 +98,9 @@ def integrated(tmp_path):
     state["make"] = make
     with make() as client:
         state["browser"] = client
-        options = client.get("/pve-komodo/api/server-create-options", headers={"cookie": COOKIE})
+        options = client.get("/pve-plugins/api/komodo/server-create-options", headers={"cookie": COOKIE})
         assert options.status_code == 200
-        state["headers"] = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": options.json()["csrf_token"]}
+        state["headers"] = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": options.json()["csrf_token"]}
         yield state
     store.close()
 
@@ -111,31 +111,31 @@ def command(**changes):
 
 def test_options_auth_and_real_native_creation_permission(integrated):
     state = integrated; client = state["browser"]
-    assert client.get("/pve-komodo/api/server-create-options").status_code == 401
-    response = client.get("/pve-komodo/api/server-create-options", headers={"cookie": COOKIE})
+    assert client.get("/pve-plugins/api/komodo/server-create-options").status_code == 401
+    response = client.get("/pve-plugins/api/komodo/server-create-options", headers={"cookie": COOKIE})
     assert response.json()["can_create"] is True and response.json()["can_link"] is True
     assert [row["vmid"] for row in response.json()["guests"]] == [101, 102]
     state["permission"] = False
-    assert client.get("/pve-komodo/api/server-create-options", headers={"cookie": COOKIE}).json()["can_create"] is False
-    assert client.post("/pve-komodo/api/servers/create", headers=state["headers"], json=command()).status_code == 403
+    assert client.get("/pve-plugins/api/komodo/server-create-options", headers={"cookie": COOKIE}).json()["can_create"] is False
+    assert client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=command()).status_code == 403
     assert not state["writes"]
 
 
 def test_unbound_creation_works_and_does_not_fetch_or_persist_guest_fingerprint(integrated):
     state = integrated; client = state["browser"]
     value = command()
-    response = client.post("/pve-komodo/api/servers/create", headers=state["headers"], json=value)
+    response = client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=value)
     assert response.status_code == 200 and response.json()["created"] is True and response.json()["link"] is None
     assert response.json()["server_id"] == SERVER and state["fingerprints"] == 0 and state["store"].list() == []
-    assert client.post("/pve-komodo/api/servers/create", headers=state["headers"], json=value).json() == response.json()
+    assert client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=value).json() == response.json()
     assert len(state["writes"]) == 1 and SECRET not in response.text
-    assert client.post("/pve-komodo/api/servers/create", headers=state["headers"], json={**value, "name": "changed"}).status_code == 409
+    assert client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json={**value, "name": "changed"}).status_code == 409
 
 
 @pytest.mark.parametrize("guest_type,vmid,strength", [("qemu", 101, "strong"), ("lxc", 102, "weak")])
 def test_optional_link_rechecks_exact_identity_before_and_after_create(integrated, guest_type, vmid, strength):
     state = integrated; client = state["browser"]
-    response = client.post("/pve-komodo/api/servers/create", headers=state["headers"], json=command(guest_type=guest_type, vmid=vmid))
+    response = client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=command(guest_type=guest_type, vmid=vmid))
     assert response.status_code == 200
     data = response.json()
     assert data["created"] is True and data["status"] == "completed" and data["link"]["server_id"] == SERVER
@@ -147,7 +147,7 @@ def test_optional_link_rechecks_exact_identity_before_and_after_create(integrate
 
 def test_replaced_guest_before_create_prevents_any_upstream_mutation(integrated):
     state = integrated; state["change_before"] = True
-    response = state["browser"].post("/pve-komodo/api/servers/create", headers=state["headers"], json=command(guest_type="qemu", vmid=101))
+    response = state["browser"].post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=command(guest_type="qemu", vmid=101))
     assert response.status_code == 409 and response.json()["detail"] == "guest_identity_changed"
     assert not state["writes"] and state["store"].list() == []
 
@@ -162,10 +162,10 @@ def test_created_but_unlinked_is_a_durable_receipt_and_never_deleted_or_recreate
     else:
         state[failure] = True
     value = command(guest_type="qemu", vmid=101)
-    first = client.post("/pve-komodo/api/servers/create", headers=state["headers"], json=value)
+    first = client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=value)
     assert first.status_code == 200 and first.json()["created"] is True and first.json()["status"] == "created_unlinked"
     assert first.json()["server_id"] == SERVER and first.json()["link"] is None and first.json()["link_error"]
-    assert client.post("/pve-komodo/api/servers/create", headers=state["headers"], json=value).json() == first.json()
+    assert client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=value).json() == first.json()
     assert len(state["writes"]) == 1 and SECRET not in first.text
 
 
@@ -173,24 +173,24 @@ def test_created_but_unlinked_is_a_durable_receipt_and_never_deleted_or_recreate
 def test_ambiguous_create_never_attempts_association_or_retry(integrated, outcome):
     state = integrated; state["core_response"] = outcome; client = state["browser"]
     value = command(guest_type="qemu", vmid=101)
-    first = client.post("/pve-komodo/api/servers/create", headers=state["headers"], json=value)
+    first = client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=value)
     assert first.status_code == 200 and first.json()["status"] == "outcome_unknown" and first.json()["created"] is None
     assert first.json()["server_id"] is None and state["store"].list() == []
-    assert client.post("/pve-komodo/api/servers/create", headers=state["headers"], json=value).json() == first.json()
+    assert client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=value).json() == first.json()
     assert len(state["writes"]) == 1 and SECRET not in first.text
 
 
 def test_guest_discovery_failure_does_not_block_unbound_creation(integrated):
     state = integrated; state["guest_failure"] = True; client = state["browser"]
-    response = client.get("/pve-komodo/api/server-create-options", headers={"cookie": COOKIE})
+    response = client.get("/pve-plugins/api/komodo/server-create-options", headers={"cookie": COOKIE})
     assert response.json()["can_create"] and response.json()["guests"] == [] and response.json()["errors"]
-    assert client.post("/pve-komodo/api/servers/create", headers=state["headers"], json=command()).json()["created"] is True
+    assert client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=command()).json()["created"] is True
 
 
 @pytest.mark.parametrize("selection", [{"guest_type": "qemu", "vmid": 103}, {"guest_type": "qemu", "vmid": 999}])
 def test_template_or_inaccessible_guest_cannot_be_associated(integrated, selection):
     state = integrated
-    response = state["browser"].post("/pve-komodo/api/servers/create", headers=state["headers"], json=command(**selection))
+    response = state["browser"].post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=command(**selection))
     assert response.status_code == 409 and not state["writes"]
 
 
@@ -198,15 +198,15 @@ def test_already_linked_guest_hidden_from_options_and_rejected_before_create(int
     state = integrated
     state["store"].save(OTHER, {"guest_type": "qemu", "vmid": 101},
         {"kind": "vm_uuid", "values": [UUID], "strength": "strong"}, expected_revision=0)
-    options = state["browser"].get("/pve-komodo/api/server-create-options", headers={"cookie": COOKIE})
+    options = state["browser"].get("/pve-plugins/api/komodo/server-create-options", headers={"cookie": COOKIE})
     assert [row["vmid"] for row in options.json()["guests"]] == [102]
-    response = state["browser"].post("/pve-komodo/api/servers/create", headers=state["headers"], json=command(guest_type="qemu", vmid=101))
+    response = state["browser"].post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=command(guest_type="qemu", vmid=101))
     assert response.status_code == 409 and not state["writes"]
 
 
 def test_guest_without_stable_fingerprint_prevents_create(integrated):
     state = integrated; state["uuid"] = "not-a-uuid"
-    response = state["browser"].post("/pve-komodo/api/servers/create", headers=state["headers"], json=command(guest_type="qemu", vmid=101))
+    response = state["browser"].post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=command(guest_type="qemu", vmid=101))
     assert response.status_code == 409 and response.json()["detail"] == "guest_identity_unavailable"
     assert not state["writes"]
 
@@ -217,33 +217,33 @@ def test_guest_without_stable_fingerprint_prevents_create(integrated):
     {"public_key": "unexpected"}, {"server_id": SERVER}])
 def test_schema_cannot_smuggle_config_keys_routes_or_partial_selection(integrated, changes):
     state = integrated
-    assert state["browser"].post("/pve-komodo/api/servers/create", headers=state["headers"], json=command(**changes)).status_code == 422
+    assert state["browser"].post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], json=command(**changes)).status_code == 422
     assert not state["writes"]
 
 
-@pytest.mark.parametrize("header,value", [("cookie", "PVEAuthCookie=invalid"), ("origin", "https://evil.example"), ("x-pve-komodo-csrf", "bad")])
+@pytest.mark.parametrize("header,value", [("cookie", "PVEAuthCookie=invalid"), ("origin", "https://evil.example"), ("x-pve-plugins-csrf", "bad")])
 def test_creation_requires_pve_session_same_origin_and_csrf(integrated, header, value):
     state = integrated
-    response = state["browser"].post("/pve-komodo/api/servers/create", headers={**state["headers"], header: value}, json=command())
+    response = state["browser"].post("/pve-plugins/api/komodo/servers/create", headers={**state["headers"], header: value}, json=command())
     assert response.status_code in {401, 403} and not state["writes"]
 
 
 def test_no_guest_store_still_allows_unbound_creation(integrated):
     state = integrated
     with state["make"](False) as client:
-        options = client.get("/pve-komodo/api/server-create-options", headers={"cookie": COOKIE})
+        options = client.get("/pve-plugins/api/komodo/server-create-options", headers={"cookie": COOKIE})
         assert options.json()["can_create"] and options.json()["can_link"] is False and options.json()["guests"] == []
-        headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": options.json()["csrf_token"]}
-        assert client.post("/pve-komodo/api/servers/create", headers=headers, json=command(guest_type="qemu", vmid=101)).status_code == 503
-        assert client.post("/pve-komodo/api/servers/create", headers=headers, json=command()).json()["created"] is True
+        headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": options.json()["csrf_token"]}
+        assert client.post("/pve-plugins/api/komodo/servers/create", headers=headers, json=command(guest_type="qemu", vmid=101)).status_code == 503
+        assert client.post("/pve-plugins/api/komodo/servers/create", headers=headers, json=command()).json()["created"] is True
 
 
 def test_fixed_query_content_type_size_and_json_boundary(integrated):
     state = integrated; client = state["browser"]
-    assert client.get("/pve-komodo/api/server-create-options?_dc=1", headers={"cookie": COOKIE}).status_code == 422
-    assert client.post("/pve-komodo/api/servers/create?name=other", headers=state["headers"], json=command()).status_code == 422
-    assert client.post("/pve-komodo/api/servers/create", headers=state["headers"], content="text").status_code == 415
+    assert client.get("/pve-plugins/api/komodo/server-create-options?_dc=1", headers={"cookie": COOKIE}).status_code == 422
+    assert client.post("/pve-plugins/api/komodo/servers/create?name=other", headers=state["headers"], json=command()).status_code == 422
+    assert client.post("/pve-plugins/api/komodo/servers/create", headers=state["headers"], content="text").status_code == 415
     headers = {**state["headers"], "content-type": "application/json"}
-    assert client.post("/pve-komodo/api/servers/create", headers=headers, content="{" + "x" * 8192).status_code == 413
-    assert client.post("/pve-komodo/api/servers/create", headers=headers, content="{bad").status_code == 422
+    assert client.post("/pve-plugins/api/komodo/servers/create", headers=headers, content="{" + "x" * 8192).status_code == 413
+    assert client.post("/pve-plugins/api/komodo/servers/create", headers=headers, content="{bad").status_code == 422
     assert not state["writes"]

@@ -31,8 +31,8 @@ KEY, SECRET, PRIVATE = "terminal-key", "terminal-secret", "private-config-and-up
 TICKET = "PVE:root@pam:1234ABCD::signature+value="
 RENEWED = "PVE:root@pam:1234ABCE::another-signature="
 COOKIE = "PVEAuthCookie=" + quote(TICKET, safe="")
-BASE = "/pve-komodo/api/stacks/" + STACK
-CONTAINER_BASE = "/pve-komodo/api/servers/" + SERVER + "/containers/" + CONTAINER
+BASE = "/pve-plugins/api/komodo/stacks/" + STACK
+CONTAINER_BASE = "/pve-plugins/api/komodo/servers/" + SERVER + "/containers/" + CONTAINER
 
 
 @pytest.fixture
@@ -196,7 +196,7 @@ def issue(state, *, request_id=None, cookie=COOKIE, shell="sh"):
     token = response.json()["csrf_token"]
     command = {"service": "app", "server_id": SERVER, "container_id": CONTAINER,
                "shell": shell, "request_id": request_id or str(uuid.uuid4())}
-    created = browser.post(BASE + "/terminals", headers={"cookie": cookie, "origin": "http://testserver", "x-pve-komodo-csrf": token}, json=command)
+    created = browser.post(BASE + "/terminals", headers={"cookie": cookie, "origin": "http://testserver", "x-pve-plugins-csrf": token}, json=command)
     assert created.status_code == 200
     assert_private(created)
     return created.json(), token, command
@@ -290,7 +290,7 @@ def test_grant_schema_rejects_command_url_rpc_or_name_injection(terminal, change
     _, token, command = issue(terminal)
     before = len(terminal["seen"])
     response = terminal["browser"].post(BASE + "/terminals", headers={"cookie": COOKIE, "origin": "http://testserver",
-        "x-pve-komodo-csrf": token}, json={**command, **changes})
+        "x-pve-plugins-csrf": token}, json={**command, **changes})
     assert response.status_code == 422
     assert not any(source == "core" for source, _ in terminal["seen"][before:])
     assert terminal["created"] == []
@@ -308,7 +308,7 @@ def test_http_denials_never_use_komodo_credentials_for_unauthorized_requests(ter
     headers = {"cookie": COOKIE} if kind != "anonymous" else {}
     headers["origin"] = "http://evil.example" if kind == "cross_origin" else "http://testserver"
     if kind != "no_csrf":
-        headers["x-pve-komodo-csrf"] = token
+        headers["x-pve-plugins-csrf"] = token
     response = terminal["browser"].post(BASE + "/terminals", headers=headers, json={})
     assert response.status_code == (401 if kind in ("anonymous", "expired") else 403)
     assert not any(source == "core" for source, _ in terminal["seen"])
@@ -321,7 +321,7 @@ def test_ws_grants_require_matching_cookie_user_stack_and_unexpired_csrf(termina
     if kind == "bad_csrf":
         token = "forged"
     elif kind == "wrong_stack":
-        path = "/pve-komodo/api/stacks/" + OTHER
+        path = "/pve-plugins/api/komodo/stacks/" + OTHER
     elif kind == "renewed_cookie":
         cookie = "PVEAuthCookie=" + quote(RENEWED, safe="")
         token = terminal["browser"].get(BASE + "/terminal-services", headers={"cookie": cookie}).json()["csrf_token"]
@@ -345,7 +345,7 @@ def test_ws_origin_is_mandatory_exact_and_checked_before_auth_or_accept(terminal
 
 
 @pytest.mark.parametrize("path", [BASE + "/terminal-services?_dc=1", BASE + "/terminal-services?page=0",
-                                  "/pve-komodo/api/stacks/not-an-id/terminal-services"])
+                                  "/pve-plugins/api/komodo/stacks/not-an-id/terminal-services"])
 def test_terminal_targets_reject_unknown_query_or_invalid_id_before_komodo(terminal, path):
     response = terminal["browser"].get(path, headers={"cookie": COOKIE})
     assert response.status_code == 422
@@ -543,7 +543,7 @@ def issue_container(state, *, shell="sh", command=None, request_id=None, cookie=
     if command is not None:
         payload["command"] = command
     response = state["browser"].post(CONTAINER_BASE + "/terminals", headers={"cookie": cookie,
-        "origin": "http://testserver", "x-pve-komodo-csrf": token}, json=payload)
+        "origin": "http://testserver", "x-pve-plugins-csrf": token}, json=payload)
     assert response.status_code == 200
     assert_private(response)
     return response.json(), token, payload
@@ -605,7 +605,7 @@ def test_container_terminal_schema_rejects_target_overrides_and_invalid_custom_c
     token = response.json()["csrf_token"]
     terminal["seen"].clear()
     response = terminal["browser"].post(CONTAINER_BASE + "/terminals", headers={"cookie": COOKIE,
-        "origin": "http://testserver", "x-pve-komodo-csrf": token},
+        "origin": "http://testserver", "x-pve-plugins-csrf": token},
         json={"shell": "sh", "request_id": str(uuid.uuid4()), **changes})
     assert response.status_code == 422
     assert not any(source == "core" for source, _ in terminal["seen"])
@@ -656,7 +656,7 @@ def test_container_terminal_options_disable_all_modes_when_current_target_cannot
         assert response.json()["can_open"] is False
         assert response.json()["options"] == {"sh": False, "bash": False, "attach": False, "custom": False}
         response = terminal["browser"].post(CONTAINER_BASE + "/terminals", headers={"cookie": COOKIE,
-            "origin": "http://testserver", "x-pve-komodo-csrf": response.json()["csrf_token"]},
+            "origin": "http://testserver", "x-pve-plugins-csrf": response.json()["csrf_token"]},
             json={"shell": "sh", "request_id": str(uuid.uuid4())})
         assert response.status_code == 409
     assert terminal["created"] == []
@@ -703,7 +703,7 @@ def test_container_terminal_denials_do_not_contact_core(terminal, kind):
     headers = {"cookie": COOKIE} if kind != "anonymous" else {}
     headers["origin"] = "http://evil.example" if kind == "cross_origin" else "http://testserver"
     if kind != "no_csrf":
-        headers["x-pve-komodo-csrf"] = token
+        headers["x-pve-plugins-csrf"] = token
     terminal["seen"].clear()
     response = terminal["browser"].post(CONTAINER_BASE + "/terminals", headers=headers, json={})
     assert response.status_code == (401 if kind in ("anonymous", "expired") else 403)

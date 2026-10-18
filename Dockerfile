@@ -4,14 +4,14 @@ ARG SOURCE_REVISION=unknown
 ARG SOURCE_REPOSITORY=https://github.com/sqkkyzx/pve-webui-plugins
 LABEL org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      org.opencontainers.image.version="0.3.0" \
+      org.opencontainers.image.version="0.4.0" \
       org.opencontainers.image.description="Non-invasive, selectable WebUI plugins for Proxmox VE" \
       org.opencontainers.image.licenses="GPL-3.0"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PVE_RUNTIME_DIR=/run/pve-webui-plugins
+    PVE_PLUGINS_RUNTIME_DIR=/run/pve-webui-plugins
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.txt \

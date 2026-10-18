@@ -18,7 +18,7 @@ from plugins.komodo.server_options import GuestBoundOptionsService
 
 SERVER = "a" * 24
 VERSION = "b" * 64
-PATH = "/pve-komodo/api/guests/qemu/101/options"
+PATH = "/pve-plugins/api/komodo/guests/qemu/101/options"
 COOKIE = "PVEAuthCookie=test-ticket"
 
 
@@ -71,7 +71,7 @@ def boundary(monkeypatch, tmp_path):
     response = client.get(PATH, headers={"cookie": COOKIE})
     assert response.status_code == 200
     state["headers"] = {"cookie": COOKIE, "origin": "http://testserver",
-                        "x-pve-komodo-csrf": response.json()["csrf_token"]}
+                        "x-pve-plugins-csrf": response.json()["csrf_token"]}
     state["ledger"] = ledger
     return client, state
 
@@ -108,7 +108,7 @@ def test_strict_route_context_and_query(boundary, path):
 def test_write_session_csrf_and_origin(boundary, changes):
     client, state = boundary
     headers = dict(state["headers"])
-    headers.update({"x-pve-komodo-csrf" if key == "csrf" else key: value for key, value in changes.items()})
+    headers.update({"x-pve-plugins-csrf" if key == "csrf" else key: value for key, value in changes.items()})
     assert client.post(PATH, headers=headers, json=command()).status_code in {401, 403}
     assert not state["writes"]
 

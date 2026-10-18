@@ -17,7 +17,7 @@ from plugins.sites.site_routes import register_site_routes
 
 
 PVE = "https://pve.example:8006"
-PATH = "/pve-komodo/api/sites"
+PATH = "/pve-plugins/api/sites"
 TICKET = "PVE:root@pam:1234ABCD::fixture-signature="
 COOKIE = "PVEAuthCookie=" + quote(TICKET, safe="")
 URL = "https://grafana.example/dashboard?orgId=1#panel"
@@ -55,7 +55,7 @@ def integrated(tmp_path):
 def credentials(client):
     response = client.get(PATH, headers={"cookie": COOKIE})
     assert response.status_code == 200
-    return {"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": response.json()["csrf_token"]}
+    return {"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": response.json()["csrf_token"]}
 
 
 def test_real_app_crud_and_private_headers_work_without_komodo(integrated):
@@ -95,7 +95,7 @@ def test_anonymous_requests_are_401_before_pve_network_or_lazy_database(integrat
 
 
 @pytest.mark.parametrize("override", [
-    {"x-pve-komodo-csrf": "wrong"}, {"origin": "https://evil.example"},
+    {"x-pve-plugins-csrf": "wrong"}, {"origin": "https://evil.example"},
     {"origin": "http://evil.example", "x-forwarded-host": "evil.example"},
     {"sec-fetch-site": "cross-site"},
 ])
@@ -112,7 +112,7 @@ def test_duplicate_csrf_headers_are_rejected(integrated):
     headers = credentials(client)
     response = client.post(PATH, json={"name": "no", "url": URL}, headers=[
         ("cookie", COOKIE), ("origin", "http://testserver"),
-        ("x-pve-komodo-csrf", headers["x-pve-komodo-csrf"]), ("x-pve-komodo-csrf", headers["x-pve-komodo-csrf"])])
+        ("x-pve-plugins-csrf", headers["x-pve-plugins-csrf"]), ("x-pve-plugins-csrf", headers["x-pve-plugins-csrf"])])
     assert response.status_code == 403
 
 
@@ -234,3 +234,12 @@ def test_default_path_derivation_is_lazy_and_explicit(monkeypatch, tmp_path, act
     database = register_site_routes(app, settings, None, CsrfProtector())
     assert str(database.path) == (str(tmp_path / expected) if actions is None else expected)
     assert database._connection is None and list(tmp_path.iterdir()) == []
+
+
+def test_old_csrf_header_cannot_authorize_a_write(integrated):
+    client,_,_ = integrated
+    headers = credentials(client)
+    headers['x-pve-komodo-csrf'] = headers.pop('x-pve-plugins-csrf')
+    response = client.post(PATH,json={"name": "no", "url": URL},headers=headers)
+    assert response.status_code == 403
+    assert client.get(PATH,headers={"cookie": COOKIE}).json()['sites'] == []

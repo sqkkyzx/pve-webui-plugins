@@ -188,7 +188,7 @@
             schedule(state, generation, expectedUser);
         }
         try {
-            const request = Ext.Ajax.request({ url: '/pve-komodo/api/nodes/' + encodeURIComponent(state.node) + '/temperatures',
+            const request = Ext.Ajax.request({ url: '/pve-plugins/api/temperatures/nodes/' + encodeURIComponent(state.node),
                 method: 'GET', disableCaching: false, timeout: 15000, callback: complete });
             if (!completed) state.request = request;
         } catch (error) { complete(null, false, null); }
@@ -238,7 +238,7 @@
         view.on('beforedestroy', function () { leave(state); states.delete(state); });
     }
     try {
-        Ext.define('PVEKomodo.override.NodeStatusTemperatures', { override: 'PVE.node.StatusView', initComponent: function () {
+        Ext.define('PVETemperatures.override.NodeStatusTemperatures', { override: 'PVE.node.StatusView', initComponent: function () {
             const result = this.callParent(arguments);
             try { attach(this); }
             catch (error) {
@@ -259,7 +259,7 @@
         } });
         const Summary = Ext.ClassManager.get('PVE.node.Summary');
         if (Summary && Summary.prototype && typeof Summary.prototype.initComponent === 'function') {
-            Ext.define('PVEKomodo.override.NodeTemperatureSummaryLayout', { override: 'PVE.node.Summary', initComponent: function () {
+            Ext.define('PVETemperatures.override.NodeTemperatureSummaryLayout', { override: 'PVE.node.Summary', initComponent: function () {
                 const result = this.callParent(arguments);
                 const summary = this;
                 const status = this.nodeStatus;
@@ -300,7 +300,7 @@
         window[registration] = true;
         const Workspace = Ext.ClassManager.get('PVE.StdWorkspace');
         if (Workspace && Workspace.prototype && typeof Workspace.prototype.onLogin === 'function') {
-            Ext.define('PVEKomodo.override.NodeTemperatureSession', { override: 'PVE.StdWorkspace', onLogin: function (loginData) {
+            Ext.define('PVETemperatures.override.NodeTemperatureSession', { override: 'PVE.StdWorkspace', onLogin: function (loginData) {
                 const workspace = this;
                 workspace._pveTemperaturesLoggedOut = !loginData;
                 if (!loginData) states.forEach(function (state) {

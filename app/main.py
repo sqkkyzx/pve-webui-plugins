@@ -16,11 +16,7 @@ from app.settings import Settings
 
 
 LOGGER = logging.getLogger("pve_webui_plugins")
-VERSION = "0.3.0"
-# Retained for deployments that already route /pve-komodo/ to this service.
-EXTENSION_PATH = "/pve-komodo/assets/extension.js"
-TEMPERATURE_EXTENSION_PATH = "/pve-komodo/assets/temperatures.js"
-SITE_EXTENSION_PATH = "/pve-komodo/assets/sites.js"
+VERSION = "0.4.0"
 
 
 # Reject unknown desktop shapes instead of injecting into login providers,
@@ -40,11 +36,11 @@ WORKSPACE_SCRIPT = re.compile(
 
 def inject_extension(body: bytes, query: str, enabled: bool, head: bytes) -> tuple[bytes, str]:
     params = parse_qs(query, keep_blank_values=True)
-    if not enabled or params.get("pve-plugins") == ["off"] or params.get("pve-komodo") == ["off"]:
+    if not enabled or params.get("pve-plugins") == ["off"]:
         return body, "disabled"
     if any(key in params for key in ("console", "novnc", "xtermjs", "mobile")):
         return body, "console-or-mobile"
-    if b"<!-- pve-webui-plugins:begin -->" in body or EXTENSION_PATH.encode() in body:
+    if b"<!-- pve-webui-plugins:begin -->" in body:
         return body, "already-present"
     managers = list(MANAGER_SCRIPT.finditer(body))
     workspaces = list(WORKSPACE_SCRIPT.finditer(body))
@@ -102,17 +98,15 @@ def create_app(
     @application.middleware("http")
     async def private_api_responses(request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith(("/pve-komodo/api/", "/pve-plugins/api/")):
+        if request.url.path.startswith("/pve-plugins/api/"):
             response.headers["Cache-Control"] = "private, no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
     @application.get("/pve-plugins/api/session")
-    @application.get("/pve-komodo/api/session")
     async def session(request: Request) -> dict:
         user = await authenticator.authenticate(request)
-        komodo = handles.get("komodo")
-        return {"user": user, "komodo_configured": bool(komodo and komodo.metadata.get("configured"))}
+        return {"user": user}
 
     @application.get("/pve-plugins/api/plugins")
     async def plugins(request: Request) -> dict:
@@ -120,10 +114,9 @@ def create_app(
         return {**runtime.manifest, "available": [plugin.public() for plugin in catalog.values()]}
 
     @application.get("/pve-plugins/health")
-    @application.get("/pve-komodo/health")
     async def health() -> JSONResponse:
         return JSONResponse({"status": "ok", "version": VERSION,
-                             "extension_enabled": config.extension_enabled,
+                             "injection_enabled": config.injection_enabled,
                              "plugins": runtime.manifest["enabled"]})
 
     def asset_endpoint(asset):
@@ -171,7 +164,7 @@ def create_app(
         body = upstream.content
         state = "upstream-response"
         if upstream.status_code == 200 and upstream.headers.get("content-type", "").split(";", 1)[0].strip().lower() == "text/html":
-            body, state = inject_extension(body, query, config.extension_enabled and bool(runtime.plugins), runtime.head)
+            body, state = inject_extension(body, query, config.injection_enabled and bool(runtime.plugins), runtime.head)
 
         # HTTPX has decoded Content-Encoding. Remove body validators as well as
         # hop-by-hop headers, and preserve duplicate Set-Cookie headers.
@@ -191,7 +184,6 @@ def create_app(
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
-        response.headers["X-PVE-KOMODO-Extension"] = state
         response.headers["X-PVE-Plugins-Extension"] = state
         return response
 

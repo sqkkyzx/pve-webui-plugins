@@ -3,7 +3,7 @@
     const Ext = window.Ext;
     const marker = '__pveExtraSitesLoaded';
     const viewId = 'pve-extra-sites';
-    const api = '/pve-komodo/api/sites';
+    const api = '/pve-plugins/api/sites';
     if (window[marker] || !Ext || !Ext.ClassManager || typeof Ext.ClassManager.get !== 'function' || typeof Ext.define !== 'function') return;
     const Selector = Ext.ClassManager.get('PVE.form.ViewSelector');
     const Tree = Ext.ClassManager.get('PVE.tree.ResourceTree');
@@ -285,7 +285,7 @@
         }
         try {
             const request = Ext.Ajax.request({ url: api + (site ? '/' + site.id : ''), method: method, jsonData: body,
-                headers: { 'X-PVE-KOMODO-CSRF': state.csrf }, timeout: 45000, callback: complete });
+                headers: { 'X-PVE-Plugins-CSRF': state.csrf }, timeout: 45000, callback: complete });
             if (!completed) state.write = request;
         } catch (error) { state.write = null; complete(null, false, null); }
     }
@@ -374,12 +374,12 @@
         } else if (state.active) leave(state);
     }
     try {
-        Ext.define('PVEKomodo.override.ExtraSitesSelector', { override: 'PVE.form.ViewSelector', initComponent: function () {
+        Ext.define('PVESites.override.ExtraSitesSelector', { override: 'PVE.form.ViewSelector', initComponent: function () {
             const result = this.callParent(arguments), store = this.getStore();
             if (!store.findRecord('key', viewId, 0, false, true, true)) store.add({ key: viewId, value: '附加站点' });
             return result;
         } });
-        Ext.define('PVEKomodo.override.ExtraSitesTree', { override: 'PVE.tree.ResourceTree', initComponent: function () {
+        Ext.define('PVESites.override.ExtraSitesTree', { override: 'PVE.tree.ResourceTree', initComponent: function () {
             const result = this.callParent(arguments), native = this, previous = this.setViewFilter;
             if (typeof previous !== 'function') return result;
             this.setViewFilter = function (view) {
@@ -400,7 +400,7 @@
             });
             return result;
         } });
-        Ext.define('PVEKomodo.override.ExtraSitesWorkspace', { override: 'PVE.StdWorkspace', onLogin: function (loginData) {
+        Ext.define('PVESites.override.ExtraSitesWorkspace', { override: 'PVE.StdWorkspace', onLogin: function (loginData) {
             const workspace = this;
             workspace._pveExtraSitesLoggedOut = !loginData;
             if (!loginData) states.forEach(function (state) { if (state.workspace === workspace) { leave(state); state.selected = null; status(state, '请先登录 PVE'); } });

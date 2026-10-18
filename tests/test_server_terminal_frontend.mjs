@@ -98,7 +98,7 @@ test('guest terminal keeps the shared fit/fullscreen panel and loads the guest-b
     assert.equal(view.tab.items[0].cls, 'pve-komodo-stack-terminal-output');
     assert.equal(view.tab.listeners.activate, undefined, 'nested activation cannot request stack details');
     view.activate(); assert.equal(view.requests.length, 1);
-    assert.equal(view.requests[0].url, '/pve-komodo/api/guests/qemu/119/terminal-services');
+    assert.equal(view.requests[0].url, '/pve-plugins/api/komodo/guests/qemu/119/terminal-services');
     assert.equal(view.requests[0].disableCaching, false);
     assert.equal(view.button.disabled, true); view.respond(snapshot()); assert.equal(view.button.disabled, false);
 });
@@ -118,8 +118,8 @@ test('server choices send only pinned binding and explicit modes and reject inva
         }
         dialog.down('#pve-komodo-terminal-create').handler();
         const post = view.requests.at(-1);
-        assert.equal(post.url, '/pve-komodo/api/guests/qemu/119/terminals');
-        assert.equal(post.headers['X-PVE-Komodo-CSRF'], 'guest-terminal-csrf');
+        assert.equal(post.url, '/pve-plugins/api/komodo/guests/qemu/119/terminals');
+        assert.equal(post.headers['X-PVE-Plugins-CSRF'], 'guest-terminal-csrf');
         assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData)), { server_id: 'b'.repeat(24), binding_revision: 3,
             shell: mode, ...(mode === 'custom' ? { command: '/bin/sh -l' } : {}), request_id: 'ceaa63ca-3693-4ef0-8cbf-4de83911a76b' });
         assert.ok(!('container_id' in post.jsonData) && !('service' in post.jsonData));

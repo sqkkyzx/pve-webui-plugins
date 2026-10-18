@@ -50,7 +50,7 @@ def _origin(value: str | None) -> str | None:
         return str(httpx.URL(value)).rstrip("/")
     except (ValueError, httpx.InvalidURL):
         # Do not include the supplied URL: it might contain credentials.
-        raise ValueError("KOMODO_URL must be a fixed HTTP(S) origin") from None
+        raise ValueError("PVE_KOMODO_URL must be a fixed HTTP(S) origin") from None
 
 
 def _credential(value: str | None) -> str | None:

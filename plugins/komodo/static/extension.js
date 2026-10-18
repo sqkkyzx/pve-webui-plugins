@@ -269,8 +269,8 @@
         try {
             // Keep this POST separate from the cancellable dashboard GET.
             Ext.Ajax.request({
-                url: '/pve-komodo/api/action', method: 'POST', timeout: 120000,
-                headers: { 'X-PVE-Komodo-CSRF': csrf },
+                url: '/pve-plugins/api/komodo/action', method: 'POST', timeout: 120000,
+                headers: { 'X-PVE-Plugins-CSRF': csrf },
                 jsonData: { section: section, action: action[0], ids: ids, request_id: requestId },
                 callback: complete,
             });
@@ -368,7 +368,7 @@
     }
 
     function serverPageBase(node) {
-        return node.server_id ? '/pve-komodo/api/servers/' + node.server_id : '/pve-komodo/api/guests/' + node.type + '/' + Number(node.vmid);
+        return node.server_id ? '/pve-plugins/api/komodo/servers/' + node.server_id : '/pve-plugins/api/komodo/guests/' + node.type + '/' + Number(node.vmid);
     }
     function serverReplyMatches(panel, data) {
         return !panel.pveKomodoDirectServer || data && data.server_id === panel.pveKomodoDirectServer && data.binding_revision === 0;
@@ -430,8 +430,8 @@
                     if (current()) { message(notice); controls(); }
                     inventoryAllControls();
                 }
-                try { Ext.Ajax.request({ url: '/pve-komodo/api/servers/create', method: 'POST', timeout: 120000,
-                    headers: { 'X-PVE-Komodo-CSRF': state.data.csrf_token }, jsonData: payload, callback: complete }); }
+                try { Ext.Ajax.request({ url: '/pve-plugins/api/komodo/servers/create', method: 'POST', timeout: 120000,
+                    headers: { 'X-PVE-Plugins-CSRF': state.data.csrf_token }, jsonData: payload, callback: complete }); }
                 catch (error) { complete(null, false, null); }
             } }, { text: '关闭', handler: function () { if (!state.pending) dialog.close(); } }],
             listeners: { beforeclose: function () { return !state.pending; }, beforedestroy: function () {
@@ -464,7 +464,7 @@
             } catch (error) { message('创建权限读取失败，请关闭后重试'); }
             controls();
         }
-        try { const request = Ext.Ajax.request({ url: '/pve-komodo/api/server-create-options', method: 'GET', disableCaching: false, timeout: 60000, callback: loaded });
+        try { const request = Ext.Ajax.request({ url: '/pve-plugins/api/komodo/server-create-options', method: 'GET', disableCaching: false, timeout: 60000, callback: loaded });
             if (!completed) state.read = request;
         } catch (error) { loaded(null, false, null); }
     }
@@ -694,7 +694,7 @@
             if (panel._pveKomodoGuestReady && typeof afterLoad === 'function') afterLoad();
         }
         try {
-            const request = Ext.Ajax.request({ url: '/pve-komodo/api/guest-links', method: 'GET',
+            const request = Ext.Ajax.request({ url: '/pve-plugins/api/komodo/guest-links', method: 'GET',
                 disableCaching: false, timeout: 60000, callback: complete });
             if (!completed) panel._pveKomodoGuestRequest = request;
         } catch (error) { complete(null, false, null); }
@@ -744,8 +744,8 @@
         }
         try {
             // A submitted metadata write survives card navigation; never retry it.
-            Ext.Ajax.request({ url: '/pve-komodo/api/guest-links' + (unlink ? '/unlink' : ''), method: 'POST',
-                headers: { 'X-PVE-Komodo-CSRF': csrf }, jsonData: payload, timeout: 60000, callback: complete });
+            Ext.Ajax.request({ url: '/pve-plugins/api/komodo/guest-links' + (unlink ? '/unlink' : ''), method: 'POST',
+                headers: { 'X-PVE-Plugins-CSRF': csrf }, jsonData: payload, timeout: 60000, callback: complete });
         } catch (error) { complete(null, false, null); }
     }
 
@@ -870,7 +870,7 @@
             return;
         }
         const nativeId = link.guest_type + '/' + link.vmid;
-        const base = '/pve-komodo/api/guests/' + nativeId;
+        const base = '/pve-plugins/api/komodo/guests/' + nativeId;
         if (panel.pveKomodoGuestBase === base) { loadGuestSummary(panel); return; }
         const tree = Array.from(containerTreeStates).find(function (state) { return state.workspace === workspace; });
         if (tree) {
@@ -1136,7 +1136,7 @@
                 }
                 try {
                     Ext.Ajax.request({ url: path + '/actions', method: 'POST', timeout: 120000,
-                        headers: { 'X-PVE-Komodo-CSRF': data.csrf_token }, jsonData: payload, callback: complete });
+                        headers: { 'X-PVE-Plugins-CSRF': data.csrf_token }, jsonData: payload, callback: complete });
                 } catch (error) { complete(null, false, null); }
             },
         });
@@ -1211,7 +1211,7 @@
                 }
                 try {
                     Ext.Ajax.request({ url: path + '/description', method: 'POST', timeout: 90000,
-                        headers: { 'X-PVE-Komodo-CSRF': data.csrf_token }, jsonData: payload, callback: complete });
+                        headers: { 'X-PVE-Plugins-CSRF': data.csrf_token }, jsonData: payload, callback: complete });
                 } catch (error) { complete(null, false, null); }
             } }, { text: '重置', itemId: 'pve-komodo-description-reset', handler: function () {
                 editor.down('#pve-komodo-description-value').setValue(original); editor.down('#pve-komodo-description-error').update('');
@@ -1538,7 +1538,7 @@
         }
         try {
             Ext.Ajax.request({ url: path, method: 'POST', timeout: 120000,
-                headers: { 'X-PVE-Komodo-CSRF': panel._pveKomodoOptionsData.csrf_token }, jsonData: payload, callback: complete });
+                headers: { 'X-PVE-Plugins-CSRF': panel._pveKomodoOptionsData.csrf_token }, jsonData: payload, callback: complete });
         } catch (error) { complete(null, false, null); }
     }
     function confirmOptions(panel, action, values) {
@@ -2026,7 +2026,7 @@
         try {
             // This endpoint is outside /api2; use raw same-origin Ext.Ajax.
             const request = Ext.Ajax.request({
-                url: '/pve-komodo/api/' + (panel.pveKomodoPage === 'containers' ? 'containers' : 'dashboard'),
+                url: '/pve-plugins/api/komodo/' + (panel.pveKomodoPage === 'containers' ? 'containers' : 'dashboard'),
                 method: 'GET', disableCaching: false, timeout: 60000,
                 callback: complete,
             });
@@ -2363,7 +2363,7 @@
             alertsStatus(panel, message);
         }
         try {
-            const request = Ext.Ajax.request({ url: '/pve-komodo/api/alerts', method: 'GET', params: params,
+            const request = Ext.Ajax.request({ url: '/pve-plugins/api/komodo/alerts', method: 'GET', params: params,
                 // ExtJS 7 otherwise adds _dc, which is not an alert filter.
                 // The API already returns private, no-store responses.
                 disableCaching: false,
@@ -2704,7 +2704,7 @@
         }
         try {
             const request = Ext.Ajax.request({
-                url: '/pve-komodo/api/updates/' + id, method: 'GET', disableCaching: false,
+                url: '/pve-plugins/api/komodo/updates/' + id, method: 'GET', disableCaching: false,
                 timeout: 60000, callback: complete,
             });
             if (!completed) window._pveKomodoDetailRequest = request;
@@ -2778,7 +2778,7 @@
             updatesStatus(panel, message);
         }
         try {
-            const request = Ext.Ajax.request({ url: '/pve-komodo/api/updates', method: 'GET', params: params,
+            const request = Ext.Ajax.request({ url: '/pve-plugins/api/komodo/updates', method: 'GET', params: params,
                 disableCaching: false, timeout: 60000, callback: complete });
             if (!completed) panel._pveKomodoUpdatesRequest = request;
         } catch (error) { complete(null, false, null); }
@@ -3018,7 +3018,7 @@
             if (!state.linksKnown) notices.push('关联状态未知');
             containerTreeStatus(state, notices.join('；'));
         }
-        [['containers', '/pve-komodo/api/containers'], ['links', '/pve-komodo/api/guest-links']].forEach(function (entry) {
+        [['containers', '/pve-plugins/api/komodo/containers'], ['links', '/pve-plugins/api/komodo/guest-links']].forEach(function (entry) {
             if (!containerTreeCurrent(state, generation, user)) return;
             let request, completed = false;
             function complete(options, success, response) {
@@ -3082,7 +3082,7 @@
                 link = data.links.find(function (candidate) { return candidate && candidate.server_id === serverId; });
                 if (validGuest(link) && link.status === 'linked' && link.can_navigate === true) {
                     const nativeId = link.guest_type + '/' + link.vmid;
-                    const base = '/pve-komodo/api/guests/' + link.guest_type + '/' + link.vmid;
+                    const base = '/pve-plugins/api/komodo/guests/' + link.guest_type + '/' + link.vmid;
                     requestedGuestServer = { base: base, server_id: serverId, user: user };
                     // A dedicated container/stack page can replace the guest
                     // while the hidden native tree still selects that guest.
@@ -3115,7 +3115,7 @@
             else openDockerDestination(state.workspace, serverId, null, '关联待确认或客体不可访问，已转到 Komodo 服务器');
         }
         try {
-            const request = Ext.Ajax.request({ url: '/pve-komodo/api/guest-links', method: 'GET', disableCaching: false, timeout: 60000, callback: complete });
+            const request = Ext.Ajax.request({ url: '/pve-plugins/api/komodo/guest-links', method: 'GET', disableCaching: false, timeout: 60000, callback: complete });
             if (!completed) state.navigationRequest = request;
         } catch (error) { complete(null, false, null); }
     }
@@ -3474,7 +3474,7 @@
                     if (alive(activeGuestSummary)) summaryControls(activeGuestSummary);
                 }
                 try { Ext.Ajax.request({ url: endpoint || page.pveKomodoStackPath, method: 'POST', timeout: 120000,
-                    headers: { 'X-PVE-Komodo-CSRF': data.csrf_token }, jsonData: frozen, callback: complete }); }
+                    headers: { 'X-PVE-Plugins-CSRF': data.csrf_token }, jsonData: frozen, callback: complete }); }
                 catch (error) { complete(null, false, null); }
             } });
         stackControls(page);
@@ -3872,7 +3872,7 @@
                     } catch (error) { stackStatus(page, stackError(response, '终端创建结果未确认；不会自动重试，请核对后重新新建')); }
                 }
                 try { Ext.Ajax.request({ url: page.pveKomodoStackPath + '/terminals', method: 'POST', timeout: 60000,
-                    headers: { 'X-PVE-Komodo-CSRF': source.csrf_token }, jsonData: { service: service.service, server_id: service.server_id,
+                    headers: { 'X-PVE-Plugins-CSRF': source.csrf_token }, jsonData: { service: service.service, server_id: service.server_id,
                         container_id: service.container_id, shell: shell, request_id: requestId }, callback: complete }); }
                 catch (error) { complete(null, false, null); }
             } }, { text: '取消', handler: function () { dialog.destroy(); } }] });
@@ -3988,7 +3988,7 @@
         if (!workspace || typeof workspace.setContent !== 'function' || dockerNavigationBusy()) return;
         const title = '应用栈：' + text(name || stackId);
         workspace.setContent({ xtype: 'pvePanelConfig', pveKomodoStackPage: true, pveKomodoStackId: stackId,
-            pveKomodoStackPath: '/pve-komodo/api/stacks/' + stackId, _pveKomodoStackExpectedServer: serverId,
+            pveKomodoStackPath: '/pve-plugins/api/komodo/stacks/' + stackId, _pveKomodoStackExpectedServer: serverId,
             _pveKomodoStackActive: true, workspace: workspace, title: title, onlineHelp: 'chapter_gui', showSearch: false, tbarSpacing: false,
             // Private ConfigPanel context only; never a native resource or rid.
             pveSelNode: { data: { id: 'pve-komodo-stack:' + stackId, text: title } },
@@ -4259,7 +4259,7 @@
                         containerDetailError(response, '终端创建结果未确认；请核对后重新新建，不会自动重试'));
                 }
                 try { Ext.Ajax.request({ url: page.pveKomodoStackPath + '/terminals', method: 'POST', timeout: 60000,
-                    headers: { 'X-PVE-Komodo-CSRF': source.csrf_token }, jsonData: payload, callback: complete }); }
+                    headers: { 'X-PVE-Plugins-CSRF': source.csrf_token }, jsonData: payload, callback: complete }); }
                 catch (error) { complete(null, false, null); }
             } }, { text: '取消', handler: function () { dialog.destroy(); } }] });
         tab._pveKomodoTerminalDialog = dialog; dialog.show();
@@ -4322,7 +4322,7 @@
         if (!workspace || typeof workspace.setContent !== 'function' || dockerNavigationBusy() || !/^[0-9a-f]{24}$/i.test(serverId) || !/^[0-9a-f]{64}$/i.test(containerId)) return;
         const title = '容器：' + text(name || containerId);
         workspace.setContent({ xtype: 'pvePanelConfig', pveKomodoContainerPage: true, pveKomodoContainerServer: serverId, pveKomodoContainerId: containerId,
-            pveKomodoStackPath: '/pve-komodo/api/servers/' + serverId + '/containers/' + containerId, _pveKomodoStackActive: true,
+            pveKomodoStackPath: '/pve-plugins/api/komodo/servers/' + serverId + '/containers/' + containerId, _pveKomodoStackActive: true,
             workspace: workspace, title: title, onlineHelp: 'chapter_gui', showSearch: false, tbarSpacing: false,
             pveSelNode: { data: { id: 'pve-komodo-container:' + serverId + ':' + containerId, text: title } },
             tbar: containerDetailActions.map(function (action) { return { text: action[1], itemId: 'pve-komodo-container-' + action[0], disabled: true,
@@ -4497,7 +4497,7 @@
                     inventoryAllControls();
                 }
                 try { Ext.Ajax.request({ url: page.pveKomodoGuestBase + '/inventory-actions', method: 'POST', timeout: 120000,
-                    headers: { 'X-PVE-Komodo-CSRF': data.csrf_token }, jsonData: copyOption(payload), callback: complete }); }
+                    headers: { 'X-PVE-Plugins-CSRF': data.csrf_token }, jsonData: copyOption(payload), callback: complete }); }
                 catch (error) { complete(null, false, null); }
             } });
         inventoryControls(page);

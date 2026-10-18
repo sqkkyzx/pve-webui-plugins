@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PLUGINS_DIR = ROOT / "plugins"
 TEMPLATES_DIR = ROOT / "templates"
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]{0,47}\Z")
-ASSET_URL = re.compile(r"/(?:pve-komodo|pve-plugins)/assets/[a-zA-Z0-9_./-]+\.js\Z")
+ASSET_URL = re.compile(r"/pve-plugins/assets/[a-zA-Z0-9_./-]+\.js\Z")
 
 
 @dataclass(frozen=True)
@@ -103,6 +103,7 @@ def discover_plugins(root: Path = PLUGINS_DIR) -> dict[str, Plugin]:
                         or Path(asset["source"]).is_absolute()
                         or ".." in Path(asset["source"]).parts
                         or not isinstance(asset["url"], str) or ASSET_URL.fullmatch(asset["url"]) is None
+                        or not asset["url"].startswith(f"/pve-plugins/assets/{plugin_id}/")
                         or any(part in {"", ".", ".."} for part in asset["url"].split("/")[1:])
                         or asset["url"] in reserved_urls):
                     raise ValueError

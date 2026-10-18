@@ -57,7 +57,7 @@ def register_server_create_routes(application, config, authenticator, komodo, cs
         if request.query_params:
             raise HTTPException(422, "invalid_server_create_query")
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 
@@ -78,7 +78,7 @@ def register_server_create_routes(application, config, authenticator, komodo, cs
             raise GuestLinkError("guest_identity_unavailable", 409)
         return guest, identity, guests
 
-    @application.get("/pve-komodo/api/server-create-options")
+    @application.get("/pve-plugins/api/komodo/server-create-options")
     async def options(request: Request):
         try:
             async with asyncio.timeout(45):
@@ -97,7 +97,7 @@ def register_server_create_routes(application, config, authenticator, komodo, cs
         except TimeoutError:
             raise HTTPException(504, "server_create_options_timeout") from None
 
-    @application.post("/pve-komodo/api/servers/create")
+    @application.post("/pve-plugins/api/komodo/servers/create")
     async def create(request: Request):
         try:
             async with asyncio.timeout(20):

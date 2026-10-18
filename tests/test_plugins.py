@@ -20,9 +20,9 @@ ROOT = Path(__file__).resolve().parent.parent
 IDS = ("komodo", "temperatures", "sites")
 COMBINATIONS = [values for count in range(4) for values in combinations(IDS, count)]
 PATHS = {
-    "komodo": ("/pve-komodo/api/connection", "/pve-komodo/assets/extension.js"),
-    "temperatures": ("/pve-komodo/api/nodes/pve-a/temperatures", "/pve-komodo/assets/temperatures.js"),
-    "sites": ("/pve-komodo/api/sites", "/pve-komodo/assets/sites.js"),
+    "komodo": ("/pve-plugins/api/komodo/connection", "/pve-plugins/assets/komodo/extension.js"),
+    "temperatures": ("/pve-plugins/api/temperatures/nodes/pve-a", "/pve-plugins/assets/temperatures/temperatures.js"),
+    "sites": ("/pve-plugins/api/sites", "/pve-plugins/assets/sites/sites.js"),
 }
 
 
@@ -49,8 +49,7 @@ def test_all_plugin_combinations_control_html_api_and_assets(enabled, tmp_path):
             assert client.head(asset).status_code == (200 if active else 404)
             assert (asset.encode() in body) == active
         assert client.get("/pve-plugins/api/plugins").status_code == 401
-        for query in ("pve-plugins=off", "pve-komodo=off"):
-            assert client.get("/?" + query).content == DESKTOP
+        assert client.get("/?pve-plugins=off").content == DESKTOP
     generated = json.loads((tmp_path / "runtime/plugins.json").read_text())
     assert generated["enabled"] == list(enabled)
     head = (tmp_path / "runtime/desktop-head.html").read_bytes()
@@ -79,9 +78,9 @@ for name in ('komodo', 'temperatures', 'sites'):
 def test_environment_can_select_no_plugins_and_ignores_disabled_plugin_configuration(monkeypatch, tmp_path):
     monkeypatch.setenv("PVE_UPSTREAM", "https://pve.example:8006")
     monkeypatch.setenv("PVE_PLUGINS", "")
-    monkeypatch.setenv("KOMODO_URL", "invalid-origin")
-    monkeypatch.setenv("KOMODO_TLS_VERIFY", "invalid-but-unused")
-    monkeypatch.setenv("PVE_TEMPERATURE_SOURCES_FILE", str(tmp_path / "missing.json"))
+    monkeypatch.setenv("PVE_KOMODO_URL", "invalid-origin")
+    monkeypatch.setenv("PVE_KOMODO_TLS_VERIFY", "invalid-but-unused")
+    monkeypatch.setenv("PVE_TEMPERATURES_SOURCES_FILE", str(tmp_path / "missing.json"))
     config = Settings.from_env()
     assert config.enabled_plugins == ()
     with TestClient(create_app(config)) as client:
@@ -101,7 +100,7 @@ def test_plugin_metadata_requires_pve_auth_and_generated_templates_never_contain
         assert data.json()["enabled"] == ["sites"]
         assert {item["id"] for item in data.json()["available"]} == set(IDS)
         assert data.headers["cache-control"] == "private, no-store"
-        assert client.get("/pve-plugins/api/session").json()["komodo_configured"] is False
+        assert client.get("/pve-plugins/api/session").json() == {"user": "root@pam"}
     for path in tmp_path.iterdir():
         assert b"NEVER-PUBLISH" not in path.read_bytes()
 
@@ -136,8 +135,8 @@ def test_sites_wraps_container_tree_even_if_environment_lists_sites_first():
     with TestClient(app) as client:
         assert client.get("/pve-plugins/health").json()["plugins"] == ["komodo", "sites"]
         body = client.get("/").text
-        assert body.index("/assets/extension.js") < body.index("/assets/sites.js")
-        assert client.get("/pve-komodo/api/sites").status_code == 401
+        assert body.index("/assets/komodo/extension.js") < body.index("/assets/sites/sites.js")
+        assert client.get("/pve-plugins/api/sites").status_code == 401
 
 
 @pytest.mark.parametrize("enabled", [("unknown",), ("sites", "sites"), ("../sites",)])
@@ -157,7 +156,7 @@ def test_disabled_assets_need_not_exist_and_restarting_replaces_generated_files(
     assert json.loads((tmp_path / "plugins.json").read_text())["enabled"] == ["sites"]
     # An unselected plugin's assets are not required for the host to start.
     missing = Plugin("optional", "Optional", "1.0.0", "plugins.optional.plugin:setup", (),
-                     (Asset(tmp_path / "missing.js", "/pve-plugins/assets/missing.js"),))
+                     (Asset(tmp_path / "missing.js", "/pve-plugins/assets/optional/missing.js"),))
     catalog[missing.id] = missing
     assert render_runtime(resolve_plugins(catalog, ("sites",))).head == runtime.head
     with pytest.raises(FileNotFoundError):
@@ -168,6 +167,8 @@ def test_disabled_assets_need_not_exist_and_restarting_replaces_generated_files(
     {"api_version": 2}, {"id": "other"}, {"entrypoint": "os:system"},
     {"assets": [{"source": "../../outside.js", "url": "/pve-plugins/assets/test.js"}]},
     {"assets": [{"source": "static/test.js", "url": "/pve-plugins/assets/../test.js"}]},
+    {"assets": [{"source": "static/test.js", "url": "/pve-komodo/assets/test.js"}]},
+    {"assets": [{"source": "static/test.js", "url": "/pve-plugins/assets/other/test.js"}]},
 ])
 def test_manifests_reject_unsupported_contracts_and_path_escape(tmp_path, change):
     folder = tmp_path / "sample"
@@ -211,7 +212,7 @@ def test_new_plugin_is_discovered_and_loaded_without_editing_core(monkeypatch, t
     (folder / "plugin.json").write_text(json.dumps({
         "id": "sample", "name": "Sample", "version": "1.0.0", "api_version": 1,
         "entrypoint": "plugins.sample.plugin:setup", "requires": [],
-        "assets": [{"source": "static/sample.js", "url": "/pve-plugins/assets/sample.js"}],
+        "assets": [{"source": "static/sample.js", "url": "/pve-plugins/assets/sample/sample.js"}],
     }))
     (folder / "plugin.py").write_text('''
 from fastapi import Request
@@ -231,4 +232,60 @@ def setup(context):
     with TestClient(app) as client:
         assert client.get("/pve-plugins/health").json()["plugins"] == ["sample"]
         assert client.get("/pve-plugins/api/sample/status").status_code == 401
-        assert client.get("/pve-plugins/assets/sample.js").text == "window.samplePluginLoaded = true;\n"
+        assert client.get("/pve-plugins/assets/sample/sample.js").text == "window.samplePluginLoaded = true;\n"
+
+
+@pytest.mark.parametrize("path", [
+    "/pve-komodo/health", "/pve-komodo/api/session", "/pve-komodo/api/dashboard",
+    "/pve-komodo/api/sites", "/pve-komodo/assets/extension.js",
+    "/pve-komodo/assets/sites.js", "/pve-plugins/api/dashboard",
+    "/pve-plugins/assets/sites.js",
+])
+def test_removed_routes_are_not_redirected_or_aliased(path):
+    app = create_app(Settings("https://pve.example:8006", tls_verify=False))
+    with TestClient(app) as client:
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 404 and "location" not in response.headers
+    assert all(not route.path.startswith("/pve-komodo/") for route in app.routes)
+
+
+def test_old_bypass_and_response_header_are_removed():
+    app = create_app(Settings("https://pve.example:8006", tls_verify=False),
+                     transport=httpx.MockTransport(lambda _: httpx.Response(
+                         200, content=DESKTOP, headers={"content-type": "text/html"})))
+    with TestClient(app) as client:
+        response = client.get("/?pve-komodo=off")
+        assert response.headers["x-pve-plugins-extension"] == "enabled"
+        assert "x-pve-komodo-extension" not in response.headers
+        assert b"/pve-plugins/assets/sites/sites.js" in response.content
+        assert client.get("/?pve-plugins=off").content == DESKTOP
+
+
+def test_settings_use_only_current_environment_names(monkeypatch):
+    for name in ("PVE_KOMODO_URL", "PVE_KOMODO_API_KEY", "PVE_KOMODO_API_SECRET",
+                 "PVE_KOMODO_TLS_VERIFY", "PVE_PLUGINS_INJECTION_ENABLED",
+                 "PVE_PLUGINS_RUNTIME_DIR", "PVE_KOMODO_ACTION_STATE_FILE",
+                 "PVE_KOMODO_GUEST_LINKS_FILE", "PVE_SITES_STATE_FILE",
+                 "PVE_TEMPERATURES_SOURCES_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    for name,value in {"PVE_UPSTREAM": "https://pve.example:8006", "PVE_PLUGINS": "sites",
+                       "KOMODO_URL": "http://old.invalid:9120", "KOMODO_API_KEY": "old-key",
+                       "KOMODO_API_SECRET": "old-secret", "KOMODO_TLS_VERIFY": "invalid",
+                       "PVE_EXTENSION_ENABLED": "false", "PVE_RUNTIME_DIR": "/old/runtime",
+                       "PVE_ACTION_STATE_FILE": "/old/actions", "PVE_GUEST_LINKS_FILE": "/old/links",
+                       "PVE_SITES_FILE": "/old/sites", "PVE_TEMPERATURE_SOURCES_FILE": "/old/temperatures"}.items():
+        monkeypatch.setenv(name,value)
+    config = Settings.from_env()
+    assert config.injection_enabled is True and config.runtime_dir is None
+    assert config.komodo_url is config.komodo_api_key is config.komodo_api_secret is None
+    assert config.action_state_file is config.guest_links_file is config.site_state_file is config.temperature_sources_file is None
+    for name,value in {"PVE_KOMODO_URL": "http://core:9120", "PVE_KOMODO_API_KEY": "new-key",
+                       "PVE_KOMODO_API_SECRET": "new-secret", "PVE_PLUGINS_INJECTION_ENABLED": "false",
+                       "PVE_PLUGINS_RUNTIME_DIR": "/new/runtime", "PVE_KOMODO_ACTION_STATE_FILE": "/new/actions",
+                       "PVE_KOMODO_GUEST_LINKS_FILE": "/new/links", "PVE_SITES_STATE_FILE": "/new/sites",
+                       "PVE_TEMPERATURES_SOURCES_FILE": "/new/temperatures"}.items():
+        monkeypatch.setenv(name,value)
+    config = Settings.from_env()
+    assert config.injection_enabled is False and config.runtime_dir == "/new/runtime"
+    assert (config.komodo_url,config.komodo_api_key,config.komodo_api_secret) == ("http://core:9120","new-key","new-secret")
+    assert (config.action_state_file,config.guest_links_file,config.site_state_file,config.temperature_sources_file) == ("/new/actions","/new/links","/new/sites","/new/temperatures")

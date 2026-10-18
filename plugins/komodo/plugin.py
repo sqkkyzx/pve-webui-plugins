@@ -79,7 +79,7 @@ def setup(context):
     register_server_create_routes(application, config, authenticator, komodo, csrf, guest_store,
                                   action_store, action_tasks, transport=pve_auth_transport)
 
-    @application.get("/pve-komodo/api/connection")
+    @application.get("/pve-plugins/api/komodo/connection")
     async def connection(request: Request) -> dict:
         # Authorize the browser session before using the service account. These
         # routes are read-only; future write routes also need CSRF protection.
@@ -88,7 +88,7 @@ def setup(context):
         LOGGER.info("Komodo connection check user=%s connected=%s", user, status["connected"])
         return {"user": user, "komodo": status}
 
-    @application.get("/pve-komodo/api/dashboard")
+    @application.get("/pve-plugins/api/komodo/dashboard")
     async def dashboard(request: Request) -> dict:
         try:
             # Bound the whole operation, including authentication, below the
@@ -103,7 +103,7 @@ def setup(context):
         LOGGER.info("Komodo dashboard read user=%s", user)
         return {"user": user, **data, "csrf_token": csrf.issue(request, user)}
 
-    @application.get("/pve-komodo/api/containers")
+    @application.get("/pve-plugins/api/komodo/containers")
     async def containers(request: Request) -> dict:
         try:
             async with asyncio.timeout(DASHBOARD_TIMEOUT_SECONDS):
@@ -116,7 +116,7 @@ def setup(context):
         LOGGER.info("Komodo containers read user=%s", user)
         return {"user": user, **data, "csrf_token": csrf.issue(request, user)}
 
-    @application.get("/pve-komodo/api/alerts")
+    @application.get("/pve-plugins/api/komodo/alerts")
     async def alerts(request: Request) -> dict:
         try:
             async with asyncio.timeout(DASHBOARD_TIMEOUT_SECONDS):
@@ -148,7 +148,7 @@ def setup(context):
         LOGGER.info("Komodo alerts read user=%s page=%s", user, page_text)
         return {"user": user, **data}
 
-    @application.get("/pve-komodo/api/updates")
+    @application.get("/pve-plugins/api/komodo/updates")
     async def updates(request: Request) -> dict:
         try:
             async with asyncio.timeout(DASHBOARD_TIMEOUT_SECONDS):
@@ -177,7 +177,7 @@ def setup(context):
         LOGGER.info("Komodo updates read user=%s page=%s", user, page_text)
         return {"user": user, **data}
 
-    @application.get("/pve-komodo/api/updates/{update_id}")
+    @application.get("/pve-plugins/api/komodo/updates/{update_id}")
     async def update_details(request: Request, update_id: str) -> dict:
         try:
             async with asyncio.timeout(DASHBOARD_TIMEOUT_SECONDS):
@@ -192,14 +192,14 @@ def setup(context):
         LOGGER.info("Komodo update details read user=%s", user)
         return {"user": user, **data}
 
-    @application.post("/pve-komodo/api/action")
+    @application.post("/pve-plugins/api/komodo/action")
     async def action(request: Request) -> JSONResponse:
         try:
             async with asyncio.timeout(ACTION_AUTH_TIMEOUT_SECONDS):
                 user = await authenticator.authenticate(request)
         except TimeoutError:
             raise HTTPException(503, "pve_verification_timeout") from None
-        csrf_headers = request.headers.getlist("x-pve-komodo-csrf")
+        csrf_headers = request.headers.getlist("x-pve-plugins-csrf")
         csrf.verify(request, user, csrf_headers[0] if len(csrf_headers) == 1 else "")
         if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
             raise HTTPException(415, "json_required")

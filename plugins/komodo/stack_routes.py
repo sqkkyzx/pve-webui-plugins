@@ -60,11 +60,11 @@ def register_stack_routes(application, config, authenticator, komodo, csrf, acti
                for key in request.query_params):
             raise HTTPException(422, 'invalid_stack_query')
         if write:
-            headers = request.headers.getlist('x-pve-komodo-csrf')
+            headers = request.headers.getlist('x-pve-plugins-csrf')
             csrf.verify(request, user, headers[0] if len(headers) == 1 else '')
         return user
 
-    @application.get('/pve-komodo/api/stacks/{stack_id}')
+    @application.get('/pve-plugins/api/komodo/stacks/{stack_id}')
     async def stack_details(request: Request, stack_id: str):
         try:
             async with asyncio.timeout(45):
@@ -76,7 +76,7 @@ def register_stack_routes(application, config, authenticator, komodo, csrf, acti
         except TimeoutError:
             raise HTTPException(504, 'stack_details_timeout') from None
 
-    @application.get('/pve-komodo/api/stacks/{stack_id}/logs')
+    @application.get('/pve-plugins/api/komodo/stacks/{stack_id}/logs')
     async def stack_logs(request: Request, stack_id: str):
         try:
             async with asyncio.timeout(45):
@@ -98,7 +98,7 @@ def register_stack_routes(application, config, authenticator, komodo, csrf, acti
         except TimeoutError:
             raise HTTPException(504, 'stack_logs_timeout') from None
 
-    @application.post('/pve-komodo/api/stacks/{stack_id}')
+    @application.post('/pve-plugins/api/komodo/stacks/{stack_id}')
     async def save_stack(request: Request, stack_id: str):
         try:
             async with asyncio.timeout(20):
@@ -167,7 +167,7 @@ def register_stack_routes(application, config, authenticator, komodo, csrf, acti
         status, result = await asyncio.shield(task)
         return JSONResponse(result, status_code=status)
 
-    @application.post('/pve-komodo/api/stacks/{stack_id}/actions')
+    @application.post('/pve-plugins/api/komodo/stacks/{stack_id}/actions')
     async def stack_action(request: Request, stack_id: str):
         try:
             async with asyncio.timeout(20):

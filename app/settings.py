@@ -18,7 +18,7 @@ def env_bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Settings:
     upstream: str
-    extension_enabled: bool = True
+    injection_enabled: bool = True
     enabled_plugins: tuple[str, ...] = ("komodo", "temperatures", "sites")
     runtime_dir: str | None = None
     tls_verify: bool = True
@@ -56,20 +56,20 @@ class Settings:
             "PVE_PLUGINS", "komodo,temperatures,sites").split(",") if value.strip())
         return cls(
             upstream=os.environ["PVE_UPSTREAM"].rstrip("/"),
-            extension_enabled=env_bool("PVE_EXTENSION_ENABLED", True),
+            injection_enabled=env_bool("PVE_PLUGINS_INJECTION_ENABLED", True),
             enabled_plugins=plugins,
-            runtime_dir=os.environ.get("PVE_RUNTIME_DIR") or None,
+            runtime_dir=os.environ.get("PVE_PLUGINS_RUNTIME_DIR") or None,
             tls_verify=env_bool("PVE_TLS_VERIFY", True),
             ca_file=os.environ.get("PVE_CA_FILE") or None,
             admin_users=tuple(user.strip() for user in os.environ.get("PVE_ADMIN_USERS", "root@pam").split(",") if user.strip()),
-            komodo_url=os.environ.get("KOMODO_URL") or None,
-            komodo_api_key=os.environ.get("KOMODO_API_KEY") or None,
-            komodo_api_secret=os.environ.get("KOMODO_API_SECRET") or None,
-            komodo_tls_verify=env_bool("KOMODO_TLS_VERIFY", True) if "komodo" in plugins else True,
-            action_state_file=os.environ.get("PVE_ACTION_STATE_FILE") or None,
-            guest_links_file=os.environ.get("PVE_GUEST_LINKS_FILE") or None,
-            temperature_sources_file=os.environ.get("PVE_TEMPERATURE_SOURCES_FILE") or None,
-            site_state_file=os.environ.get("PVE_SITES_FILE") or None,
+            komodo_url=os.environ.get("PVE_KOMODO_URL") or None,
+            komodo_api_key=os.environ.get("PVE_KOMODO_API_KEY") or None,
+            komodo_api_secret=os.environ.get("PVE_KOMODO_API_SECRET") or None,
+            komodo_tls_verify=env_bool("PVE_KOMODO_TLS_VERIFY", True) if "komodo" in plugins else True,
+            action_state_file=os.environ.get("PVE_KOMODO_ACTION_STATE_FILE") or None,
+            guest_links_file=os.environ.get("PVE_KOMODO_GUEST_LINKS_FILE") or None,
+            temperature_sources_file=os.environ.get("PVE_TEMPERATURES_SOURCES_FILE") or None,
+            site_state_file=os.environ.get("PVE_SITES_STATE_FILE") or None,
         )
 
     def tls_context(self) -> ssl.SSLContext | bool:

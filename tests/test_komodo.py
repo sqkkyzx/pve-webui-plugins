@@ -80,7 +80,7 @@ def test_incomplete_configuration_never_contacts_an_upstream(url, key, secret):
 def test_only_fixed_http_origins_are_allowed_and_errors_are_sanitized(url):
     with pytest.raises(ValueError) as error:
         KomodoClient(url, API_KEY, API_SECRET)
-    assert str(error.value) == "KOMODO_URL must be a fixed HTTP(S) origin"
+    assert str(error.value) == "PVE_KOMODO_URL must be a fixed HTTP(S) origin"
     assert API_KEY not in repr(error.value)
     assert API_SECRET not in repr(error.value)
 

@@ -17,7 +17,7 @@ from plugins.komodo.container_details import (get_container_details, get_contain
                                     perform_container_detail_action, update_container_description)
 
 LOGGER = logging.getLogger("pve_komodo")
-_PATH = "/pve-komodo/api/servers/{server_id}/containers/{container_id}"
+_PATH = "/pve-plugins/api/komodo/servers/{server_id}/containers/{container_id}"
 
 
 class ContainerDescriptionCommand(BaseModel):
@@ -58,7 +58,7 @@ def register_container_routes(application, config, authenticator, komodo, csrf, 
         if any(key not in allowed or len(request.query_params.getlist(key)) != 1 for key in request.query_params):
             raise HTTPException(422, "invalid_container_query")
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 

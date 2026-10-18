@@ -65,11 +65,11 @@ def register_site_routes(application, settings, authenticator, csrf):
         if request.query_params:
             raise HTTPException(422, "invalid_site_query")
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 
-    @application.get("/pve-komodo/api/sites")
+    @application.get("/pve-plugins/api/sites")
     async def list_sites(request: Request):
         user = await authorize(request)
         try:
@@ -77,7 +77,7 @@ def register_site_routes(application, settings, authenticator, csrf):
         except SiteError as error:
             raise HTTPException(error.status_code, error.code) from None
 
-    @application.post("/pve-komodo/api/sites")
+    @application.post("/pve-plugins/api/sites")
     async def create_site(request: Request):
         await authorize(request, write=True)
         value = await _command(request, SiteRequest)
@@ -86,7 +86,7 @@ def register_site_routes(application, settings, authenticator, csrf):
         except SiteError as error:
             raise HTTPException(error.status_code, error.code) from None
 
-    @application.patch("/pve-komodo/api/sites/{site_id}")
+    @application.patch("/pve-plugins/api/sites/{site_id}")
     async def update_site(request: Request, site_id: str):
         await authorize(request, write=True)
         value = await _command(request, UpdateSiteRequest)
@@ -95,7 +95,7 @@ def register_site_routes(application, settings, authenticator, csrf):
         except SiteError as error:
             raise HTTPException(error.status_code, error.code) from None
 
-    @application.delete("/pve-komodo/api/sites/{site_id}")
+    @application.delete("/pve-plugins/api/sites/{site_id}")
     async def delete_site(request: Request, site_id: str):
         await authorize(request, write=True)
         value = await _command(request, RevisionRequest)

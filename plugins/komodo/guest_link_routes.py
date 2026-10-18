@@ -50,7 +50,7 @@ def register_guest_link_routes(application, config, authenticator, komodo, csrf,
         if request.query_params:
             raise HTTPException(422, "invalid_guest_link_query")
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 
@@ -80,7 +80,7 @@ def register_guest_link_routes(application, config, authenticator, komodo, csrf,
             result.update(status="needs_confirmation", can_navigate=False)
         return result
 
-    @application.get("/pve-komodo/api/guest-links")
+    @application.get("/pve-plugins/api/komodo/guest-links")
     async def guest_links(request: Request):
         try:
             async with asyncio.timeout(45):
@@ -109,7 +109,7 @@ def register_guest_link_routes(application, config, authenticator, komodo, csrf,
         except TimeoutError:
             raise HTTPException(504, "guest_links_timeout") from None
 
-    @application.post("/pve-komodo/api/guest-links")
+    @application.post("/pve-plugins/api/komodo/guest-links")
     async def bind_guest(request: Request):
         try:
             async with asyncio.timeout(45):
@@ -137,7 +137,7 @@ def register_guest_link_routes(application, config, authenticator, komodo, csrf,
         except TimeoutError:
             raise HTTPException(504, "guest_links_timeout") from None
 
-    @application.post("/pve-komodo/api/guest-links/unlink")
+    @application.post("/pve-plugins/api/komodo/guest-links/unlink")
     async def unlink_guest(request: Request):
         try:
             async with asyncio.timeout(20):

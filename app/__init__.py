@@ -1,1 +1,1 @@
-"""PVE WebUI extension service."""
+"""PVE WebUI plugin host."""

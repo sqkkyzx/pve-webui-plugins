@@ -18,7 +18,7 @@ PVE = "https://pve.example:8006"
 TICKET = "PVE:root@pam:1234ABCD::signature+value="
 COOKIE = "PVEAuthCookie=" + quote(TICKET, safe="")
 TOKEN = "temperature-fixture-token-" + "x" * 32
-PATH = "/pve-komodo/api/nodes/pve-a/temperatures"
+PATH = "/pve-plugins/api/temperatures/nodes/pve-a"
 NOW = 1_792_300_000
 
 
@@ -60,7 +60,7 @@ node_scrape_collector_success{collector="hwmon"} 1
 ''')
         assert str(request.url) == "https://collector.example:9469/v1/temperatures"
         assert request.headers["authorization"] == "Bearer " + TOKEN
-        assert "cookie" not in request.headers and "x-pve-komodo-csrf" not in request.headers
+        assert "cookie" not in request.headers and "x-pve-plugins-csrf" not in request.headers
         assert request.headers["accept-encoding"] == "identity"
         assert state["events"][-1] == "/api2/json/access/ticket", "PVE session must be fully authenticated first"
         state["events"].append("collector")
@@ -92,7 +92,7 @@ def test_existing_pve_session_and_sys_audit_are_required_before_collector_lookup
 
 def test_authorized_read_uses_only_fixed_source_and_safe_dto(boundary):
     browser, state = boundary
-    response = browser.get(PATH, headers={"cookie": COOKIE, "authorization": "Bearer browser-supplied-value", "x-pve-komodo-csrf": "browser-secret"})
+    response = browser.get(PATH, headers={"cookie": COOKIE, "authorization": "Bearer browser-supplied-value", "x-pve-plugins-csrf": "browser-secret"})
     assert response.status_code == 200 and response.json()["status"] == "ok"
     assert response.json()["node"] == "pve-a" and response.json()["sensors"][0]["celsius"] == 42
     assert state["events"] == ["/api2/json/access/permissions", "/api2/json/access/ticket", "collector"]

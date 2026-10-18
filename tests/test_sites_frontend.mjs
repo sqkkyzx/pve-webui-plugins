@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const source = readFileSync(new URL('../plugins/sites/static/sites.js', import.meta.url), 'utf8');
 const viewId = 'pve-extra-sites';
-const api = '/pve-komodo/api/sites';
+const api = '/pve-plugins/api/sites';
 
 function browser() {
     const classes = new Map(), stack = [], requests = [], dialogs = [], warnings = [], removedLater = [], loadedFrames = [];
@@ -297,7 +297,7 @@ test('new site has two fields and no delete; invalid URLs never submit, and save
     const request = ui.requests.at(-1).options;
     assert.equal(request.method, 'POST'); assert.equal(request.url, api);
     assert.deepEqual(JSON.parse(JSON.stringify(request.jsonData)), { name: 'Logs', url: 'https://logs.example/query?x=1#tail' });
-    assert.equal(request.headers['X-PVE-KOMODO-CSRF'], 'site-session-csrf');
+    assert.equal(request.headers['X-PVE-Plugins-CSRF'], 'site-session-csrf');
     editor.close(); assert.equal(editor.destroyed, false, 'a pending save cannot be accidentally dismissed');
     editorButton(editor, 'save').handler(); assert.equal(ui.requests.length, 2, 'pending writes are not duplicated');
     const saved = site('b', 'Logs', request.jsonData.url); ui.respond({ site: saved });
@@ -350,7 +350,7 @@ test('page removal confirms first and deletes only the selected site and revisio
     const request = ui.requests.at(-1).options;
     assert.equal(request.method, 'DELETE'); assert.equal(request.url, api + '/' + second.id);
     assert.deepEqual(JSON.parse(JSON.stringify(request.jsonData)), { expected_revision: 3 });
-    assert.equal(request.headers['X-PVE-KOMODO-CSRF'], 'site-session-csrf');
+    assert.equal(request.headers['X-PVE-Plugins-CSRF'], 'site-session-csrf');
     ui.respond({ deleted: true, id: second.id });
     assert.equal(ui.requests.at(-1).options.method, 'GET', 'the confirmed result is followed by an authoritative list read');
     ui.respond(list([site()]));

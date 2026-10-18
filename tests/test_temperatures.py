@@ -66,7 +66,7 @@ def test_node_exporter_override_has_no_required_collector_token(tmp_path):
 
 @pytest.mark.parametrize("kind", ["prometheus", "", None, True, [], {}])
 def test_unknown_source_format_cannot_bypass_configuration_validation(tmp_path, kind):
-    with pytest.raises(ValueError, match="Invalid PVE_TEMPERATURE_SOURCES_FILE configuration"):
+    with pytest.raises(ValueError, match="Invalid PVE_TEMPERATURES_SOURCES_FILE configuration"):
         sources(tmp_path, {"nodes": {"pve-a": {"type": kind, "url": "https://metrics.example"}}})
 
 
@@ -90,14 +90,14 @@ def test_plain_http_requires_loopback_or_explicit_opt_in(tmp_path, origin, allow
 def test_bad_source_config_is_startup_value_error_without_value_disclosure(tmp_path, change):
     with pytest.raises(ValueError) as error:
         sources(tmp_path, {"nodes": {"pve-a": {"url": "https://collector.example", "token": TOKEN, **change}}})
-    assert str(error.value) == "Invalid PVE_TEMPERATURE_SOURCES_FILE configuration"
+    assert str(error.value) == "Invalid PVE_TEMPERATURES_SOURCES_FILE configuration"
     assert TOKEN not in str(error.value) and "password" not in str(error.value)
 
 
 @pytest.mark.parametrize("data", [{}, {"nodes": []}, {"nodes": {}, "debug": True}, {"nodes": {"../bad": {}}},
     {"nodes": {"pve-a": {}}}, {"nodes": {str(index): {"url": "https://example.test", "token": TOKEN} for index in range(65)}}])
 def test_configuration_schema_and_node_limit_fail_closed(tmp_path, data):
-    with pytest.raises(ValueError, match="Invalid PVE_TEMPERATURE_SOURCES_FILE configuration"):
+    with pytest.raises(ValueError, match="Invalid PVE_TEMPERATURES_SOURCES_FILE configuration"):
         sources(tmp_path, data)
 
 
@@ -105,7 +105,7 @@ def test_duplicate_json_keys_and_oversized_config_are_rejected(tmp_path):
     path = tmp_path / "sources.json"
     for content in ('{"nodes":{},"nodes":{}}', '{"nodes":{"pve-a":{},"pve-a":{}}}', " " * 262145):
         path.write_text(content)
-        with pytest.raises(ValueError, match="Invalid PVE_TEMPERATURE_SOURCES_FILE configuration"):
+        with pytest.raises(ValueError, match="Invalid PVE_TEMPERATURES_SOURCES_FILE configuration"):
             load_temperature_sources(path)
 
 
@@ -155,7 +155,7 @@ def test_fixed_fetch_is_authenticated_and_never_sends_browser_or_other_source_cr
         node = "pve-a" if request.url.host == "collector-a.example" else "pve-b"
         assert request.method == "GET" and request.url.path == "/v1/temperatures" and request.url.query == b""
         assert request.headers["authorization"] == "Bearer " + configured[node].token
-        assert "cookie" not in request.headers and "x-pve-komodo-csrf" not in request.headers and "x-api-key" not in request.headers
+        assert "cookie" not in request.headers and "x-pve-plugins-csrf" not in request.headers and "x-api-key" not in request.headers
         assert request.headers["accept-encoding"] == "identity"
         return httpx.Response(200, json=payload(node=node), headers={"set-cookie": "private-cookie=do-not-replay; Path=/"})
     service = TemperatureService(configured, transport=httpx.MockTransport(handler))

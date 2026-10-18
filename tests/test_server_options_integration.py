@@ -26,7 +26,7 @@ COOKIE = "PVEAuthCookie=" + quote(TICKET, safe="")
 VM_UUID = "9f376f89-d6b7-4dc8-84a4-f4769dc9b9bb"
 KEY, SECRET = "integration-test-key", "integration-test-secret"
 PASSKEY, PRIVATE_KEY = "private-passkey-value", "private-key-value"
-PATH = "/pve-komodo/api/guests/qemu/101/options"
+PATH = "/pve-plugins/api/komodo/guests/qemu/101/options"
 
 
 @pytest.fixture
@@ -143,11 +143,11 @@ def assert_private(response):
 
 def bind_and_open(state):
     browser = state["browser"]
-    listing = browser.get("/pve-komodo/api/guest-links", headers={"cookie": COOKIE})
+    listing = browser.get("/pve-plugins/api/komodo/guest-links", headers={"cookie": COOKIE})
     assert listing.status_code == 200
     assert_private(listing)
-    headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": listing.json()["csrf_token"]}
-    binding = browser.post("/pve-komodo/api/guest-links", headers=headers, json={
+    headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": listing.json()["csrf_token"]}
+    binding = browser.post("/pve-plugins/api/komodo/guest-links", headers=headers, json={
         "server_id": SERVER, "guest_type": "qemu", "vmid": 101, "expected_revision": 0,
     })
     assert binding.status_code == 200
@@ -159,7 +159,7 @@ def bind_and_open(state):
     data = opened.json()
     assert data["binding_revision"] == 1 and data["can_write"] and data["can_rotate"]
     assert data["public_key"] == "configured-public-key"
-    headers["x-pve-komodo-csrf"] = data["csrf_token"]
+    headers["x-pve-plugins-csrf"] = data["csrf_token"]
     command = {"server_id": SERVER, "binding_revision": data["binding_revision"], "base_version": data["version"],
                "request_id": str(uuid.uuid4()), "action": "save", "config": {"region": "west"}}
     return browser, headers, command

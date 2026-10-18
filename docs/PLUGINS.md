@@ -23,11 +23,11 @@ plugins/sample/
   "entrypoint": "plugins.sample.plugin:setup",
   "requires": [],
   "after": [],
-  "assets": [{"source": "static/sample.js", "url": "/pve-plugins/assets/sample.js"}]
+  "assets": [{"source": "static/sample.js", "url": "/pve-plugins/assets/sample/sample.js"}]
 }
 ```
 
-ID 必須與目錄相同，只接受小寫英文字母開頭、英數字與底線；描述檔使用固定欄位。入口限定為本 package 的 `plugin:setup`。資源只能指向本插件內的檔案，公開 URL 不能重複。當前資源契約提供一般 JavaScript 腳本。
+ID 必須與目錄相同，只接受小寫英文字母開頭、英數字與底線；描述檔使用固定欄位。入口限定為本 package 的 `plugin:setup`。資源只能指向本插件內的檔案，公開 URL 必須位於 `/pve-plugins/assets/{plugin_id}/`，且不能重複。當前資源契約提供一般 JavaScript 腳本。
 
 `requires` 是必須明確啟用的其他插件 ID；宿主按依賴先後載入，不自動擴大啟用範圍。可選的 `after` 指定「對方也啟用時才套用」的先後關係，不會啟用對方。例如站點插件宣告 `after: ["komodo"]`，確保它包裝容器視圖的共用資源樹；仍可單獨啟用站點。沒有順序約束時沿用 `PVE_PLUGINS` 的順序。未知 ID、重複 ID、循環及缺少必要依賴都會在啟動時報錯。
 
@@ -51,7 +51,7 @@ def setup(context):
     return PluginHandle(shutdown=shutdown)
 ```
 
-`context` 提供 FastAPI application、啟動設定、PVE authenticator、共用 CSRF protector，以及測試用的具名 transports。需要自訂環境變數的插件可以在自身 `setup` 中讀取和驗證；停用插件時不執行其驗證。內建插件原有環境變數保留在 `app/settings.py` 供相容遷移。
+`context` 提供 FastAPI application、啟動設定、PVE authenticator、共用 CSRF protector，以及測試用的具名 transports。需要自訂環境變數的插件可以在自身 `setup` 中讀取和驗證；停用插件時不執行其驗證。內建插件設定定義於 `app/settings.py`，使用 `PVE_KOMODO_*`、`PVE_TEMPERATURES_*`、`PVE_SITES_*` 命名。路由及資源只使用 `/pve-plugins/`；寫入使用 `X-PVE-Plugins-CSRF`。
 
 每個業務端點都要呼叫 authenticator；宿主不會把所有未知路徑自動當作已授權。寫入還要使用 `context.csrf` 驗證來源與票據綁定的 token，並自行處理輸入校驗、併發版本和重複提交。可參考 `plugins/sites/site_routes.py`。
 

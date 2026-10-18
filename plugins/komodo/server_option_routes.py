@@ -49,11 +49,11 @@ def register_server_option_routes(application, config, authenticator, komodo, cs
         if not valid_server_target(request, guest_type, vmid):
             raise HTTPException(422, "invalid_server_options_guest")
         if write:
-            headers = request.headers.getlist("x-pve-komodo-csrf")
+            headers = request.headers.getlist("x-pve-plugins-csrf")
             csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
         return user
 
-    @application.get("/pve-komodo/api/guests/{guest_type}/{vmid}/options")
+    @application.get("/pve-plugins/api/komodo/guests/{guest_type}/{vmid}/options")
     async def server_options(request: Request, guest_type: str, vmid: str):
         try:
             async with asyncio.timeout(45):
@@ -71,7 +71,7 @@ def register_server_option_routes(application, config, authenticator, komodo, cs
         except TimeoutError:
             raise HTTPException(504, "server_options_timeout") from None
 
-    @application.post("/pve-komodo/api/guests/{guest_type}/{vmid}/options")
+    @application.post("/pve-plugins/api/komodo/guests/{guest_type}/{vmid}/options")
     async def save_server_options(request: Request, guest_type: str, vmid: str):
         try:
             async with asyncio.timeout(20):
@@ -162,10 +162,10 @@ def register_server_option_routes(application, config, authenticator, komodo, cs
         return JSONResponse(result, status_code=status)
 
 
-    @application.get("/pve-komodo/api/servers/{server_id}/options")
+    @application.get("/pve-plugins/api/komodo/servers/{server_id}/options")
     async def direct_options(request: Request, server_id: str):
         return await server_options(request, DIRECT_SERVER, server_id)
 
-    @application.post("/pve-komodo/api/servers/{server_id}/options")
+    @application.post("/pve-plugins/api/komodo/servers/{server_id}/options")
     async def direct_save_options(request: Request, server_id: str):
         return await save_server_options(request, DIRECT_SERVER, server_id)

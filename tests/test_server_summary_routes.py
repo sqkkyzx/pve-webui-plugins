@@ -22,7 +22,7 @@ PRIVATE = "summary-private-passkey-and-command-output"
 TICKET = "PVE:root@pam:1234ABCD::signature+value="
 COOKIE = "PVEAuthCookie=" + quote(TICKET, safe="")
 VM_UUID = "9f376f89-d6b7-4dc8-84a4-f4769dc9b9bb"
-BASE = "/pve-komodo/api/guests/qemu/101"
+BASE = "/pve-plugins/api/komodo/guests/qemu/101"
 TS = 1792256400123
 ACTIONS = {
     "restart_all_containers": "RestartAllContainers", "pause_all_containers": "PauseAllContainers",
@@ -197,17 +197,17 @@ def assert_private(response):
 
 def bind_and_open(state):
     browser = state["browser"]
-    listing = browser.get("/pve-komodo/api/guest-links", headers={"cookie": COOKIE})
+    listing = browser.get("/pve-plugins/api/komodo/guest-links", headers={"cookie": COOKIE})
     assert listing.status_code == 200
-    headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": listing.json()["csrf_token"]}
-    linked = browser.post("/pve-komodo/api/guest-links", headers=headers, json={
+    headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": listing.json()["csrf_token"]}
+    linked = browser.post("/pve-plugins/api/komodo/guest-links", headers=headers, json={
         "server_id": SERVER, "guest_type": "qemu", "vmid": 101, "expected_revision": 0,
     })
     assert linked.status_code == 200 and linked.json()["link"]["status"] == "linked"
     opened = browser.get(BASE + "/summary", headers={"cookie": COOKIE})
     assert opened.status_code == 200
     assert_private(opened)
-    headers["x-pve-komodo-csrf"] = opened.json()["csrf_token"]
+    headers["x-pve-plugins-csrf"] = opened.json()["csrf_token"]
     command = {"action": "pause_all_containers", "server_id": SERVER, "binding_revision": 1, "request_id": str(uuid.uuid4())}
     return browser, headers, command, opened
 
@@ -249,8 +249,8 @@ def test_summary_history_reject_unknown_duplicate_or_invalid_query_before_komodo
     assert_private(response)
 
 
-@pytest.mark.parametrize("path", ["/pve-komodo/api/guests/vm/101/summary", "/pve-komodo/api/guests/qemu/01/summary",
-                                  "/pve-komodo/api/guests/qemu/1000000000/history"])
+@pytest.mark.parametrize("path", ["/pve-plugins/api/komodo/guests/vm/101/summary", "/pve-plugins/api/komodo/guests/qemu/01/summary",
+                                  "/pve-plugins/api/komodo/guests/qemu/1000000000/history"])
 def test_invalid_guest_target_is_rejected_before_komodo(integrated, path):
     response = integrated["browser"].get(path, headers={"cookie": COOKIE})
     assert response.status_code == 422
@@ -278,13 +278,13 @@ def test_write_requires_own_valid_single_csrf_and_same_origin_before_komodo(inte
     browser, headers, command, _ = bind_and_open(integrated)
     integrated["seen"].clear()
     if kind == "missing":
-        headers.pop("x-pve-komodo-csrf")
+        headers.pop("x-pve-plugins-csrf")
     elif kind == "forged":
-        headers["x-pve-komodo-csrf"] = "PVE-CSRF-header-is-not-the-integration-token"
+        headers["x-pve-plugins-csrf"] = "PVE-CSRF-header-is-not-the-integration-token"
     elif kind == "cross_origin":
         headers["origin"] = "https://evil.example"
     else:
-        headers = list(headers.items()) + [("x-pve-komodo-csrf", headers["x-pve-komodo-csrf"])]
+        headers = list(headers.items()) + [("x-pve-plugins-csrf", headers["x-pve-plugins-csrf"])]
     response = browser.post(BASE + "/actions", headers=headers, json=command)
     assert response.status_code == 403 and integrated["writes"] == []
     assert not any(item[0] == "komodo" for item in integrated["seen"])
@@ -410,7 +410,7 @@ def test_same_uuid_cannot_change_action_or_cross_into_other_action_route(integra
     assert first.status_code == 200
     changed = browser.post(BASE + "/actions", headers=headers, json={**command, "action": "prune_system"})
     assert changed.status_code == 409 and changed.json() == {"detail": "idempotency_conflict"}
-    other_route = browser.post("/pve-komodo/api/action", headers=headers, json={
+    other_route = browser.post("/pve-plugins/api/komodo/action", headers=headers, json={
         "section": "servers", "action": command["action"], "ids": [SERVER], "request_id": command["request_id"],
     })
     assert other_route.status_code == 409 and other_route.json() == {"detail": "idempotency_conflict"}
@@ -487,7 +487,7 @@ def test_description_requires_pve_session_csrf_same_origin_and_expected_mapping(
     if kind == "anonymous":
         headers.pop("cookie")
     elif kind == "csrf":
-        headers.pop("x-pve-komodo-csrf")
+        headers.pop("x-pve-plugins-csrf")
     elif kind == "origin":
         headers["origin"] = "https://evil.example"
     else:

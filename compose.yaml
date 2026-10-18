@@ -1,6 +1,6 @@
 services:
   pve-webui-plugins:
-    image: ${PVE_EXTENSION_IMAGE:-pve-webui-plugins:local}
+    image: ${PVE_PLUGINS_IMAGE:-pve-webui-plugins:local}
     build:
       context: .
       args:
@@ -10,25 +10,25 @@ services:
       PVE_UPSTREAM: ${PVE_UPSTREAM:?Set the original PVE HTTPS address}
       # Empty intentionally disables all plugins; do not replace - with :-.
       PVE_PLUGINS: ${PVE_PLUGINS-komodo,temperatures,sites}
-      PVE_EXTENSION_ENABLED: ${PVE_EXTENSION_ENABLED:-true}
-      PVE_RUNTIME_DIR: /run/pve-webui-plugins
+      PVE_PLUGINS_INJECTION_ENABLED: ${PVE_PLUGINS_INJECTION_ENABLED:-true}
+      PVE_PLUGINS_RUNTIME_DIR: /run/pve-webui-plugins
       PVE_TLS_VERIFY: ${PVE_TLS_VERIFY:-true}
       PVE_CA_FILE: ${PVE_CA_FILE:-}
-      PVE_ACTION_STATE_FILE: /app/data/actions.sqlite3
-      PVE_GUEST_LINKS_FILE: /app/data/guest-links.sqlite3
-      PVE_SITES_FILE: /app/data/sites.sqlite3
+      PVE_KOMODO_ACTION_STATE_FILE: /app/data/actions.sqlite3
+      PVE_KOMODO_GUEST_LINKS_FILE: /app/data/guest-links.sqlite3
+      PVE_SITES_STATE_FILE: /app/data/sites.sqlite3
       PVE_ADMIN_USERS: ${PVE_ADMIN_USERS:-root@pam}
-      PVE_TEMPERATURE_SOURCES_FILE: ${PVE_TEMPERATURE_SOURCES_FILE:-}
-      KOMODO_URL: ${KOMODO_URL:-}
-      KOMODO_API_KEY: ${KOMODO_API_KEY:-}
-      KOMODO_API_SECRET: ${KOMODO_API_SECRET:-}
-      KOMODO_TLS_VERIFY: ${KOMODO_TLS_VERIFY:-true}
+      PVE_TEMPERATURES_SOURCES_FILE: ${PVE_TEMPERATURES_SOURCES_FILE:-}
+      PVE_KOMODO_URL: ${PVE_KOMODO_URL:-}
+      PVE_KOMODO_API_KEY: ${PVE_KOMODO_API_KEY:-}
+      PVE_KOMODO_API_SECRET: ${PVE_KOMODO_API_SECRET:-}
+      PVE_KOMODO_TLS_VERIFY: ${PVE_KOMODO_TLS_VERIFY:-true}
     volumes:
       - ./data:/app/data
     tmpfs:
       - /run/pve-webui-plugins:rw,noexec,nosuid,size=1m,uid=10001,gid=10001,mode=0700
     ports:
-      - "${PVE_EXTENSION_BIND:-127.0.0.1}:${PVE_EXTENSION_PORT:-18080}:8000"
+      - "${PVE_PLUGINS_BIND:-127.0.0.1}:${PVE_PLUGINS_PORT:-18080}:8000"
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

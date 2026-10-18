@@ -23,7 +23,7 @@ def request(*, host="pve.example", scheme="https", cookie=COOKIE, origin=None, f
         headers.append(("sec-fetch-site", fetch_site))
     headers.extend(extra)
     return Request({
-        "type": "http", "scheme": scheme, "method": "POST", "path": "/pve-komodo/api/action",
+        "type": "http", "scheme": scheme, "method": "POST", "path": "/pve-plugins/api/komodo/action",
         "query_string": b"", "headers": [(name.encode(), value.encode()) for name, value in headers],
         "server": ("pve.example", 443),
     })
@@ -39,7 +39,7 @@ def error403(action, code):
 
 def resign(payload):
     body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
-    signature = hmac.new(SECRET, b"pve-komodo-csrf-token\0" + body, hashlib.sha256).digest()
+    signature = hmac.new(SECRET, b"pve-plugins-csrf-token\0" + body, hashlib.sha256).digest()
     return "v1." + body.decode() + "." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
 
 

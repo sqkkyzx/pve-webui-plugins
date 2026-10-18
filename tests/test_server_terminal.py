@@ -23,7 +23,7 @@ import plugins.komodo.stack_terminal as module
 
 
 SERVER, OTHER = "b" * 24, "c" * 24
-BASE = "/pve-komodo/api/guests/qemu/119"
+BASE = "/pve-plugins/api/komodo/guests/qemu/119"
 COOKIE = "PVEAuthCookie=test-ticket"
 PRIVATE = "private-upstream-config-or-error"
 
@@ -152,7 +152,7 @@ def issue(state, *, shell="default", command=None, request_id=None):
             "request_id": request_id or str(uuid.uuid4())}
     if command is not None:
         body["command"] = command
-    headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": data["csrf_token"]}
+    headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": data["csrf_token"]}
     result = state["client"].post(BASE + "/terminals", headers=headers, json=body)
     assert result.status_code == 200
     return result.json(), data["csrf_token"], body
@@ -251,17 +251,17 @@ def test_fixed_command_schema_and_binding_do_not_allow_arbitrary_targets(server_
     data = read(server_terminal)
     body = {"server_id": SERVER, "binding_revision": 1, "shell": "default", "request_id": str(uuid.uuid4()), **change}
     response = server_terminal["client"].post(BASE + "/terminals", json=body,
-        headers={"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": data["csrf_token"]})
+        headers={"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": data["csrf_token"]})
     assert response.status_code in {409, 422}
     assert not server_terminal["created"]
 
 
 @pytest.mark.parametrize("field,value", [("cookie", "PVEAuthCookie=unknown"), ("origin", "https://evil.example"),
-    ("x-pve-komodo-csrf", "forged")])
+    ("x-pve-plugins-csrf", "forged")])
 def test_authorization_fails_before_komodo_requests(server_terminal, field, value):
     data = read(server_terminal)
     server_terminal["seen"].clear()
-    headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": data["csrf_token"], field: value}
+    headers = {"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": data["csrf_token"], field: value}
     response = server_terminal["client"].post(BASE + "/terminals", json={}, headers=headers)
     assert response.status_code in {401, 403} and not server_terminal["seen"]
 
@@ -302,7 +302,7 @@ def test_ws_origin_required_before_auth_and_accept(server_terminal):
     assert not server_terminal["seen"]
 
 
-DIRECT_BASE = "/pve-komodo/api/servers/" + SERVER
+DIRECT_BASE = "/pve-plugins/api/komodo/servers/" + SERVER
 
 
 def direct_issue(state, **changes):
@@ -312,7 +312,7 @@ def direct_issue(state, **changes):
     assert data["binding_revision"] == 0 and data["server_id"] == SERVER
     payload = {"server_id": SERVER, "binding_revision": 0, "shell": "default", "request_id": str(uuid.uuid4()), **changes}
     result = state["client"].post(DIRECT_BASE + "/terminals", json=payload,
-        headers={"cookie": COOKIE, "origin": "http://testserver", "x-pve-komodo-csrf": data["csrf_token"]})
+        headers={"cookie": COOKIE, "origin": "http://testserver", "x-pve-plugins-csrf": data["csrf_token"]})
     return result, data["csrf_token"]
 
 
