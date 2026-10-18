@@ -381,3 +381,5 @@ SafeLine 的導覽、頁面與資料模型圍繞 WAF 實例、防護應用、黑
 插件端接口為 `GET/PUT /pve-plugins/api/safeline/applications/{id}/{section}`；日誌預覽為 `GET .../applications/{id}/logs/{access|error}/preview?filename=...`。所有寫入先驗 PVE 身份／CSRF，再核對連線 revision、設定 fingerprint 與一次性 operation_id。多 API 設定逐步執行並回讀核對；部分完成或無法確認時記錄 unknown，保留草稿、禁止自動重送。同一應用共用原有編輯鎖與操作目標，避免新舊編輯器交錯寫入。
 
 API Token、憑證私鑰、來源認證密鑰、採集請求 Header 及產生的 NGINX 完整配置不回傳瀏覽器。Header 的敏感值沿用原有不透明索引，其他未知代理設定保持原值。新增腳本及 API 僅在 SafeLine 插件啟用時註冊。
+
+0.9.1 將基本資訊頁的兩個表格改為平均分配剩餘高度，移除固定高度及外層捲動；視窗空間足夠時完整顯示所有行，內容超出可用高度時才在表格內捲動。

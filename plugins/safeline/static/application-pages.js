@@ -15,8 +15,8 @@
         function valueCell(v, m, r) { return typeof v === 'boolean' ? ctx.switchMark(v, m, r) : enc(display(v)); }
         function stamp(v) { return ctx.date(v, typeof v === 'number' && v > 100000000000); }
         function hint(value) { return { xtype: 'displayfield', value: enc(value), fieldStyle: 'opacity:.75;font-size:12px' }; }
-        function optionGrid(rows, title, edit, height) {
-            return { xtype: 'grid', title: title, border: false, height: height,
+        function optionGrid(rows, title, edit) {
+            return { xtype: 'grid', title: title, border: false, flex: 1, minHeight: 0,
                 store: { fields: ['id', 'name', 'value', 'section'], data: rows },
                 columns: [{ text: '項目', dataIndex: 'name', width: 230, renderer: enc }, { text: '值', dataIndex: 'value', flex: 1, renderer: valueCell }],
                 tbar: edit ? [{ text: '編輯', iconCls: 'fa fa-pencil', handler: function (button) { const table = button.up('grid'), row = table.getSelectionModel().getSelection()[0]; if (row) edit(row.data); } }] : [],
@@ -268,10 +268,10 @@
                 ['access', '訪問日誌', typeof r.access_log_limit === 'number' ? r.access_log_limit > 0 : null, 'log-access'], ['error', '錯誤日誌', typeof r.error_log_limit === 'number' ? r.error_log_limit > 0 : null, 'log-error']];
             const table = optionGrid(rows.map(function (row) { return { id: row[0], name: row[1], value: row[2] }; }), '基礎配置', function (row) {
                 if (row.id === 'certificate' && r.cert_id) ctx.choose('certificates', String(r.cert_id)); else ctx.editResource('settings');
-            }, 290);
+            });
             table.tbar = [{ text: '編輯基礎配置', iconCls: 'fa fa-pencil', handler: function () { ctx.editResource('settings'); } }];
-            frame({ xtype: 'panel', itemId: 'safeline-app-basic', scrollable: 'y', layout: { type: 'vbox', align: 'stretch' }, items: [table,
-                optionGrid(controls.map(function (row) { return { id: row[0], name: row[1], value: row[2], section: row[3] || row[0] }; }), '防護、統計與日誌', function (row) { open(row.section); }, 300)] }, r);
+            frame({ xtype: 'panel', itemId: 'safeline-app-basic', layout: { type: 'vbox', align: 'stretch' }, items: [table,
+                optionGrid(controls.map(function (row) { return { id: row[0], name: row[1], value: row[2], section: row[3] || row[0] }; }), '防護、統計與日誌', function (row) { open(row.section); })] }, r);
         }
         function routingNodes(resources) {
             const root = { id: 'routes-root', expanded: true, children: [] }, folders = new Map([['', root]]);
