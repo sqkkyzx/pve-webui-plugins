@@ -133,6 +133,8 @@ docker compose -f compose.yaml -f compose.debug.yaml up -d --build
 
 此模式使用獨立的 `debug` 映像建構階段，增加已鎖定的 `watchfiles` 依賴；一般映像保持原有執行依賴。監看 `app/`、`plugins/`、`templates/` 內的 Python、JavaScript、JSON 描述檔和模板，並使用輪詢以支援 CephFS 等共用檔案系統。三個來源目錄在容器內唯讀，直接編輯主機上的來源即可；資料庫仍使用獨立的可寫掛載。
 
+若部署主機無法拉取基礎映像，可以手動執行 CI 並開啟 `bundle_debug_image`，取得已通過測試的 `linux/amd64` 除錯映像及 SHA-256 校驗檔；下載後使用 `docker load` 載入。此部署產物保留一天。
+
 檔案變更會重新啟動應用程序並重建模板輸出；瀏覽器刷新後載入新前端。修改 `.env` 的插件組合仍須以相同的兩個 `-f` 參數執行 `up -d --force-recreate`。
 
 Python 3.12，Node.js 20 或更新版本。前端使用原生 JavaScript，不需要前端建構。
