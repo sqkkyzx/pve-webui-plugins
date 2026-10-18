@@ -174,7 +174,7 @@ def register_routes(context, store, service):
         user = await authorize(request)
         values = query(request, {"hours"})
         hours = integer(values.get("hours", "24"), 1, 168)
-        if hours not in {1, 24, 168}:
+        if hours != 24:
             raise HTTPException(422, "invalid_safeline_query")
         try:
             return {"user": user, **await service.overview(hours)}

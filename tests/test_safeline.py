@@ -168,6 +168,20 @@ def test_inventory_classification_cert_references_and_unknown_metrics(integrated
     assert stats["sections"]["attack"]["intercept"]["challenge"] is None
 
 
+def test_overview_uses_verified_seconds_and_console_preset(integrated):
+    client, state, _, _ = integrated
+    configure(client)
+    assert client.get(BASE + "/overview?hours=24", headers={"cookie": COOKIE}).status_code == 200
+    for request in state["waf"]:
+        if request.url.path != "/api/stat/qps":
+            assert request.url.params["time_preset"] == "last1Day"
+            assert int(request.url.params["end_time"]) - int(request.url.params["begin_time"]) == 86400
+    state["waf"].clear()
+    for hours in (1, 168):
+        assert client.get(BASE + "/overview?hours=" + str(hours), headers={"cookie": COOKIE}).status_code == 422
+    assert not state["waf"]
+
+
 @pytest.mark.parametrize("path", ["/inventory?url=https://evil.example", "/events?page_size=101", "/events?page=1&page=2", "/overview?hours=2",
                                  "/records?policy_rule_id=1", "/resources/unknown/1", "/resources/applications/0", "/records?start=20&end=10"])
 def test_query_allowlists_prevent_arbitrary_upstream_requests(integrated, path):
@@ -231,3 +245,16 @@ def test_resource_states_do_not_treat_unknown_health_or_reference_as_failure():
     assert policy({"id": 1, "is_enabled": True, "expire": 123})["status"]["code"] == "unknown"
     assert certificate({"id": 1, "expired": True})["status"]["code"] == "error"
     assert ip_group({"id": 1, "ips": [], "reference": ""})["status"]["code"] == "normal"
+
+
+def test_tls_listener_suffix_is_not_forwarded_as_a_log_port():
+    site = application({"id": 1, "ports": ["443_ssl", "80", "unknown", "99999_ssl"]})
+    assert site["listeners"] == [{"port": 443, "tls": True}, {"port": 80, "tls": False}]
+
+
+def test_status_redacts_credentials_before_truncating_display_strings():
+    def handler(request):
+        data = {"version": "v" * 90 + TOKEN} if request.url.path.endswith("system") else {"version": 0}
+        return httpx.Response(200, json={"data": data, "err": ""})
+    result = asyncio.run(SafeLineClient(Connection(URL, TOKEN), transport=httpx.MockTransport(handler)).status())
+    assert TOKEN[:8] not in json.dumps(result)

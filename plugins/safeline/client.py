@@ -88,7 +88,7 @@ class SafeLineClient:
         system = await self.get("/api/open/system")
         if not isinstance(system, dict) or not isinstance(system.get("version"), str):
             raise SafeLineError("safeline_unexpected_response")
-        result = {"connected": True, "version": system["version"][:100].replace(self.connection.token, "[REDACTED]")}
+        result = {"connected": True, "version": system["version"].replace(self.connection.token, "[REDACTED]")[:100]}
         try:
             edition = await self.get("/api/open/system/edition")
             result["edition"] = {k: v.replace(self.connection.token, "[REDACTED]") if isinstance(v, str) else v

@@ -12,6 +12,8 @@ from plugins.safeline.connection import SafeLineError
 
 
 KINDS = ("applications", "deny", "allow", "certificates", "ip-groups")
+_PROXY = ("br", "force_https", "gzip", "host", "hsts", "hsts_max_age", "hsts_preload", "hsts_sub",
+          "http2", "http3", "http_1.0", "ipv6", "ssl_ciphers", "ssl_protocols", "sse", "reset_xff")
 _SECRET = re.compile(r"authorization|cookie|password|secret|token|api[_-]?key|private[_-]?key", re.I)
 
 
@@ -39,7 +41,7 @@ def safe(value, token, depth=0):
     if depth > 8:
         return "[omitted]"
     if isinstance(value, str):
-        value = value[:32768].replace(token, "[REDACTED]")
+        value = value.replace(token, "[REDACTED]")[:32768]
         value = re.sub(r"(https?://)[^/@\s]+@", r"\1[REDACTED]@", value)
         return re.sub(r"(?i)([?&](?:token|password|secret|api[_-]?key|access_token)=)[^&#\s]*", r"\1[REDACTED]", value)
     if isinstance(value, list):
@@ -74,12 +76,17 @@ def application(value):
     errors = [item for item in health_rows if item["error"]]
     if enabled is True and mode == 0 and value.get("health_check") is True and errors:
         status = state("error", "回源不可用") if len(errors) == len(health_rows) else state("pending", "部分回源異常")
+    listeners = []
+    for port in value.get("ports") or []:
+        match = re.fullmatch(r"([1-9][0-9]{0,4})(_ssl)?", str(port))
+        if match and int(match[1]) <= 65535:
+            listeners.append({"port": int(match[1]), "tls": bool(match[2])})
     result = take(value, ("id", "comment", "is_enabled", "mode", "cert_id", "created_at", "updated_at", "health_check",
                           "semantics", "challenge_is_enabled", "chaos_is_enabled", "acl_enabled", "stat_enabled", "sp_enabled"))
     result.update({"id": str(value["id"]), "kind": "applications", "status": status,
                    "name": text(value.get("title")) or ", ".join(value.get("server_names") or []) or "應用 #" + str(value["id"]),
                    "domains": value.get("server_names") or [], "ports": value.get("ports") or [],
-                   "upstreams": value.get("upstreams") or [], "health": health_rows})
+                   "upstreams": value.get("upstreams") or [], "health": health_rows, "listeners": listeners})
     return result
 
 
@@ -222,8 +229,8 @@ class SafeLineService:
                 raw = await client.get("/api/open/site/" + identifier + "/proxy")
                 if not isinstance(raw, dict):
                     raise SafeLineError("safeline_unexpected_response")
-                result["proxy"] = take(raw, ("br", "force_https", "gzip", "host", "hsts", "hsts_max_age", "hsts_preload", "hsts_sub",
-                                             "http2", "http3", "http_1.0", "ipv6", "ssl_ciphers", "ssl_protocols", "sse", "reset_xff"))
+                result["proxy"] = take(raw, _PROXY)
+                result["proxy_global"] = take(raw["global"], _PROXY) if isinstance(raw.get("global"), dict) else {}
             elif section == "protection":
                 parts = await asyncio.gather(client.get("/api/open/site/" + identifier + "/semantics"),
                                              client.get("/api/open/site/" + identifier + "/acl"), return_exceptions=True)
@@ -269,7 +276,11 @@ class SafeLineService:
     async def overview(self, hours):
         client, revision = self.client()
         end = int(time.time())
-        params = {"begin_time": end-hours*3600, "end_time": end}
+        if hours != 24:
+            raise SafeLineError("invalid_safeline_query", 422)
+        # The target CE instance silently clamps other ranges to 24 hours.
+        # Use the verified console preset rather than presenting ignored ranges.
+        params = {"begin_time": end-hours*3600, "end_time": end, "time_preset": "last1Day"}
         names = ("access", "attack", "access_trend", "intercept_trend", "qps")
         paths = ("advance/access", "advance/attack", "advance/trend/access", "advance/trend/intercept", "qps")
         results = await asyncio.gather(*(client.get("/api/stat/" + path, None if name == "qps" else params)

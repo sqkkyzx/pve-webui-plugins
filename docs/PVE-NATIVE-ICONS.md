@@ -65,3 +65,5 @@ QEMU/LXC 模板另有類型角標：主圖標使用 `fa-file-o`，搭配 `qemu`�
 - 共用宿主原生 CSS，不修改 PVE 官方檔案。
 
 SafeLine 各類資源的具體映射是另一層設計，見 [SafeLine 設計草案](SAFELINE-DESIGN.md#safeline-狀態映射)。本參考文件記錄原生能力，不表示 SafeLine 插件已實作或部署。
+
+2026-10-18 實作驗收補充：以實際 PVE `9.2.21` 的 ExtJS `7.0.0` 與原生 CSS 載入 SafeLine 頁面，已目視確認綠色三角、黃色雙豎線、憑證綠色勾及 IP 組中性圖標的組合。此驗收使用本地頁面及真實 SafeLine API 資料，不表示已登入正式 PVE 做瀏覽器驗收。

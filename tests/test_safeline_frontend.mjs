@@ -107,7 +107,9 @@ function inventory(name = '<img src=x onerror=alert(1)>', code = 'running') {
 test('SafeLine view loads through its own API and restores the native and container views', () => {
     const b = browser(), state = b.enter();
     assert.equal(b.native.hidden, true); assert.equal(state.tree.hidden, false);
-    b.reply('/connection', connection); b.reply('/inventory', inventory());
+    b.reply('/connection', connection);
+    assert.equal(state.tree.getStore().getNodeById('type:applications').get('text'), '防護應用', 'unloaded counts are not zero');
+    b.reply('/inventory', inventory());
     assert.equal(state.tree.getRootNode().childNodes.length, 5);
     assert.equal(state.tree.getStore().getNodeById('applications:12').get('text'), '<img src=x onerror=alert(1)>');
     const renderer = state.tree.columns[0].renderer;
@@ -168,4 +170,46 @@ test('duplicate script registration does not wrap the selector again', () => {
     const b = browser(); vm.runInContext(source, b.context);
     const selector = b.create('PVE.form.ViewSelector');
     assert.equal(selector.getStore().rows.filter((row) => row.key === 'pve-safeline-waf').length, 1);
+});
+
+test('log filters use their native form, validate dates and submit documented query fields', () => {
+    const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', inventory());
+    state.logMode = 'records'; const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById('events'));
+    b.reply('/records?page=1&page_size=20&source=general', { items: [], total: 0, connection_revision: 1 });
+    const table = state.page.down('#safeline-body').children[0]; table.tbar.items.find((item) => item.text === '篩選').handler();
+    const dialog = state.editor, form = dialog.down('form');
+    const field = (name) => form.children.find((c) => c.name === name);
+    field('action').value = '1'; field('url').value = '/login'; field('start_time').value = 'invalid';
+    const before = b.requests.length; dialog.buttons[0].handler(); assert.equal(b.requests.length, before);
+    assert.ok(dialog.down('#safeline-filter-status').html.includes('ISO 8601'));
+    field('start_time').value = '2026-10-17T00:00:00Z'; field('end_time').value = '2026-10-18T00:00:00Z';
+    dialog.buttons[0].handler();
+    const params = new URL('http://test.local' + b.requests.at(-1).options.url).searchParams;
+    assert.equal(params.get('action'), '1'); assert.equal(params.get('url'), '/login');
+    assert.equal(params.get('start'), String(Date.parse('2026-10-17T00:00:00Z')));
+    assert.equal(dialog.destroyed, true); assert.equal(state.editor, null);
+});
+
+test('aggregate events query related logs by dimensions and never guess a record identifier', () => {
+    const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', inventory());
+    const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById('events'));
+    const event = { id: 162, ip: '10.0.0.1', host: 'app.example', dst_port: 443, start_at: 1792185285000, end_at: 1792185420007 };
+    b.reply('/events?page=1&page_size=20&source=general', { items: [event], total: 1, connection_revision: 1 });
+    const table = state.page.down('#safeline-body').children[0]; table.fire('itemdblclick', {}, table.getStore().rows[0]);
+    state.editor.buttons[0].handler();
+    const request = new URL('http://test.local' + b.requests.at(-1).options.url);
+    assert.equal(request.pathname, base + '/records'); assert.equal(request.searchParams.get('ip'), event.ip);
+    assert.equal(request.searchParams.get('start'), String(event.start_at)); assert.equal(request.searchParams.has('event_id'), false);
+    assert.equal(state.editor, null);
+});
+
+test('partial refresh keeps stale node identity and its last successful timestamp', () => {
+    const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', inventory());
+    const previous = state.tree.getStore().getNodeById('applications:12'); state.tree.tbar[0].handler();
+    const partial = inventory(); partial.resources.applications = []; partial.errors.applications = 'safeline_timeout'; partial.updated_at = '2026-10-18T13:00:00Z';
+    b.reply('/inventory', partial);
+    assert.equal(state.tree.getStore().getNodeById('applications:12'), previous);
+    assert.equal(previous.get('iconCls'), 'fa fa-globe unknown');
+    assert.equal(state.inventory.resources.applications[0].observed_at, '2026-10-18T12:00:00Z');
+    state.page.destroy(); assert.equal(state.active, false); assert.equal(b.timers.size, 0);
 });
