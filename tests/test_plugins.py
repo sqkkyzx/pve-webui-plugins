@@ -106,8 +106,8 @@ def test_plugin_metadata_requires_pve_auth_and_generated_templates_never_contain
         assert b"NEVER-PUBLISH" not in path.read_bytes()
 
 
-def plugin(plugin_id, requires=()):
-    return Plugin(plugin_id, plugin_id, "1.0.0", f"plugins.{plugin_id}.plugin:setup", tuple(requires), ())
+def plugin(plugin_id, requires=(), after=()):
+    return Plugin(plugin_id, plugin_id, "1.0.0", f"plugins.{plugin_id}.plugin:setup", tuple(requires), (), tuple(after))
 
 
 def test_dependency_order_missing_dependencies_and_cycles():
@@ -118,6 +118,26 @@ def test_dependency_order_missing_dependencies_and_cycles():
     catalog["b"] = plugin("b", ("a",))
     with pytest.raises(ValueError, match="cycle"):
         resolve_plugins(catalog, ("a", "b"))
+
+
+def test_optional_order_does_not_enable_a_dependency_but_still_detects_cycles():
+    catalog = {"a": plugin("a", after=("b",)), "b": plugin("b")}
+    assert [item.id for item in resolve_plugins(catalog, ("a",))] == ["a"]
+    assert [item.id for item in resolve_plugins(catalog, ("a", "b"))] == ["b", "a"]
+    catalog["b"] = plugin("b", after=("a",))
+    with pytest.raises(ValueError, match="cycle"):
+        resolve_plugins(catalog, ("a", "b"))
+
+
+def test_sites_wraps_container_tree_even_if_environment_lists_sites_first():
+    app = create_app(Settings("https://pve.example:8006", tls_verify=False, enabled_plugins=("sites", "komodo")),
+                     transport=httpx.MockTransport(lambda request: httpx.Response(
+                         200, content=DESKTOP, headers={"content-type": "text/html"})))
+    with TestClient(app) as client:
+        assert client.get("/pve-plugins/health").json()["plugins"] == ["komodo", "sites"]
+        body = client.get("/").text
+        assert body.index("/assets/extension.js") < body.index("/assets/sites.js")
+        assert client.get("/pve-komodo/api/sites").status_code == 401
 
 
 @pytest.mark.parametrize("enabled", [("unknown",), ("sites", "sites"), ("../sites",)])

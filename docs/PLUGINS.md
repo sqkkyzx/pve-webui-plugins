@@ -22,13 +22,14 @@ plugins/sample/
   "api_version": 1,
   "entrypoint": "plugins.sample.plugin:setup",
   "requires": [],
+  "after": [],
   "assets": [{"source": "static/sample.js", "url": "/pve-plugins/assets/sample.js"}]
 }
 ```
 
 ID 必須與目錄相同，只接受小寫英文字母開頭、英數字與底線；描述檔使用固定欄位。入口限定為本 package 的 `plugin:setup`。資源只能指向本插件內的檔案，公開 URL 不能重複。當前資源契約提供一般 JavaScript 腳本。
 
-`requires` 是必須明確啟用的其他插件 ID；宿主按依賴先後載入，不自動擴大啟用範圍。沒有依賴時沿用 `PVE_PLUGINS` 的順序。未知 ID、重複 ID、循環及缺少依賴都會在啟動時報錯。
+`requires` 是必須明確啟用的其他插件 ID；宿主按依賴先後載入，不自動擴大啟用範圍。可選的 `after` 指定「對方也啟用時才套用」的先後關係，不會啟用對方。例如站點插件宣告 `after: ["komodo"]`，確保它包裝容器視圖的共用資源樹；仍可單獨啟用站點。沒有順序約束時沿用 `PVE_PLUGINS` 的順序。未知 ID、重複 ID、循環及缺少必要依賴都會在啟動時報錯。
 
 ## 後端入口
 

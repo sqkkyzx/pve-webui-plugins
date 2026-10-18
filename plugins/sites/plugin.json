@@ -5,5 +5,6 @@
   "api_version": 1,
   "entrypoint": "plugins.sites.plugin:setup",
   "requires": [],
+  "after": ["komodo"],
   "assets": [{"source": "static/sites.js", "url": "/pve-komodo/assets/sites.js"}]
 }

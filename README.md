@@ -36,6 +36,8 @@ PVE_PLUGINS=
 
 停用插件時，不匯入其 Python 實作、不註冊其業務 API、不提供或注入其腳本，也不初始化其連線池與資料庫。未知 ID、重複 ID、缺少依賴或循環依賴會阻止啟動，避免靜默套用錯誤組合。三個內建插件互不依賴，支援全部八種組合。
 
+共用 PVE 元件的可選載入順序由描述檔的 `after` 管理。例如站點與 Komodo 同時啟用時，站點會在 Komodo 之後載入；調換環境變數中的排列也不會破壞資源樹。
+
 修改後執行 `docker compose up -d --force-recreate`，再刷新瀏覽器。這一版在啟動時選擇插件，尚未提供執行中的熱卸載。停用保留原有資料，重新啟用可繼續讀取。
 
 `PVE_EXTENSION_ENABLED=false` 僅停止桌面注入；若要一併移除所有插件 API，使用空的 `PVE_PLUGINS`。單次繞過可訪問 `/?pve-plugins=off`，既有的 `/?pve-komodo=off` 也保留。

@@ -38,10 +38,12 @@ class Plugin:
     entrypoint: str
     requires: tuple[str, ...]
     assets: tuple[Asset, ...]
+    after: tuple[str, ...] = ()
 
     def public(self):
         return {"id": self.id, "name": self.name, "version": self.version,
-                "requires": list(self.requires), "assets": [asset.url for asset in self.assets]}
+                "requires": list(self.requires), "after": list(self.after),
+                "assets": [asset.url for asset in self.assets]}
 
 
 @dataclass
@@ -72,7 +74,7 @@ def discover_plugins(root: Path = PLUGINS_DIR) -> dict[str, Plugin]:
     for manifest in sorted(root.glob("*/plugin.json")):
         try:
             value = json.loads(manifest.read_text())
-            if (not isinstance(value, dict) or set(value) != {
+            if (not isinstance(value, dict) or set(value) - {"after"} != {
                     "id", "name", "version", "api_version", "entrypoint", "requires", "assets"}
                     or type(value["api_version"]) is not int or value["api_version"] != 1):
                 raise ValueError
@@ -86,11 +88,12 @@ def discover_plugins(root: Path = PLUGINS_DIR) -> dict[str, Plugin]:
                     or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value["version"]) is None
                     or value["entrypoint"] != f"plugins.{plugin_id}.plugin:setup"):
                 raise ValueError
-            requires = value["requires"]
-            if (not isinstance(requires, list) or any(not isinstance(item, str)
-                    or IDENTIFIER.fullmatch(item) is None for item in requires)
-                    or len(set(requires)) != len(requires) or plugin_id in requires):
-                raise ValueError
+            requires, after = value["requires"], value.get("after", [])
+            for dependencies in (requires, after):
+                if (not isinstance(dependencies, list) or any(not isinstance(item, str)
+                        or IDENTIFIER.fullmatch(item) is None for item in dependencies)
+                        or len(set(dependencies)) != len(dependencies) or plugin_id in dependencies):
+                    raise ValueError
             if not isinstance(value["assets"], list):
                 raise ValueError
             assets = []
@@ -109,7 +112,7 @@ def discover_plugins(root: Path = PLUGINS_DIR) -> dict[str, Plugin]:
                 reserved_urls.add(asset["url"])
                 assets.append(Asset(path, asset["url"]))
             catalog[plugin_id] = Plugin(plugin_id, value["name"], value["version"],
-                                        value["entrypoint"], tuple(requires), tuple(assets))
+                                        value["entrypoint"], tuple(requires), tuple(assets), tuple(after))
         except (ValueError, TypeError, KeyError, OSError):
             raise ValueError(f"Invalid plugin manifest: {manifest.parent.name}") from None
     return catalog
@@ -134,6 +137,11 @@ def resolve_plugins(catalog: dict[str, Plugin], enabled: tuple[str, ...]) -> tup
             if dependency not in enabled:
                 raise ValueError(f"Plugin {plugin_id} requires enabled plugin {dependency}")
             visit(dependency)
+        # Shared PVE overrides can require ordering without making another
+        # plugin mandatory. An unselected optional predecessor stays disabled.
+        for predecessor in catalog[plugin_id].after:
+            if predecessor in enabled:
+                visit(predecessor)
         visiting.remove(plugin_id)
         visited.add(plugin_id)
         ordered.append(catalog[plugin_id])
