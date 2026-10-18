@@ -1,0 +1,10 @@
+*
+!requirements.txt
+!app/
+!app/**
+!plugins/
+!plugins/**
+!templates/
+!templates/**
+**/__pycache__
+**/*.pyc

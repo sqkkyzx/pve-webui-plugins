@@ -1,0 +1,31 @@
+[Unit]
+Description=Read-only PVE hardware temperature collector
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+# Provision this token separately; the collector never installs packages or
+# generates credentials. Override ExecStart to set another explicit node name,
+# listen address, or paired --certfile / --keyfile options when needed.
+LoadCredential=token:/etc/pve-temperature-collector/token
+ExecStart=/usr/bin/python3 /opt/pve-temperature-collector/temperature_collector.py --node %H --token-file %d/token
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

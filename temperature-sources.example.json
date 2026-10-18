@@ -1,0 +1,9 @@
+{
+  "nodes": {
+    "pve-node": {
+      "type": "node_exporter",
+      "url": "https://metrics.example.internal:19100",
+      "ca_file": "/run/temperatures/collector-ca.pem"
+    }
+  }
+}

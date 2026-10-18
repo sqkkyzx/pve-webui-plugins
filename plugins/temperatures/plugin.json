@@ -1,0 +1,9 @@
+{
+  "id": "temperatures",
+  "name": "PVE node temperatures",
+  "version": "0.3.0",
+  "api_version": 1,
+  "entrypoint": "plugins.temperatures.plugin:setup",
+  "requires": [],
+  "assets": [{"source": "static/temperatures.js", "url": "/pve-komodo/assets/temperatures.js"}]
+}

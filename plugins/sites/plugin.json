@@ -1,0 +1,9 @@
+{
+  "id": "sites",
+  "name": "Additional sites",
+  "version": "0.3.0",
+  "api_version": 1,
+  "entrypoint": "plugins.sites.plugin:setup",
+  "requires": [],
+  "assets": [{"source": "static/sites.js", "url": "/pve-komodo/assets/sites.js"}]
+}
