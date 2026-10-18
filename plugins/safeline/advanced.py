@@ -24,7 +24,8 @@ def capabilities(raw):
 
 
 async def read(client, section):
-    path = {"proxy": "/api/open/global/proxy", "groups": "/api/open/site/group/switch"}.get(section)
+    path = {"proxy": "/api/open/global/proxy", "groups": "/api/open/site/group/switch",
+            "challenge": "/api/open/challenge/config"}.get(section)
     if not path:
         raise SafeLineError("invalid_safeline_resource", 422)
     value, edition = await asyncio.gather(client.get(path), client.get("/api/open/system/edition"), return_exceptions=True)
@@ -32,7 +33,7 @@ async def read(client, section):
         raise value
     level = edition.get("effective_edition", edition.get("version")) if isinstance(edition, dict) else None
     level = level if type(level) is int and level in {0, 1, 2} else None
-    if section == "proxy" and not isinstance(value, dict) or section == "groups" and type(value) is not bool:
+    if section in {"proxy", "challenge"} and not isinstance(value, dict) or section == "groups" and type(value) is not bool:
         raise SafeLineError("safeline_unexpected_response")
     return {section: value, "edition": level}
 
@@ -54,6 +55,11 @@ def headers(values, token):
 
 
 def values(raw, section, token):
+    if section == "challenge":
+        server = raw["challenge"].get("server")
+        if type(server) is not str or server not in {"cloud", "local"}:
+            return {}, ["server"]
+        return {"server": server}, [] if capabilities(raw)["premium"] else ["server"]
     if section == "groups":
         return {"enable": raw["groups"]}, [] if capabilities(raw)["premium"] else ["enable"]
     result, locked = {}, []
@@ -156,6 +162,12 @@ def build(raw, section, changes, token):
     current, locked = values(raw, section, token)
     if not changes or not set(changes) <= set(current):
         invalid()
+    if section == "challenge":
+        if not capabilities(raw)["premium"]:
+            raise SafeLineError("safeline_feature_unavailable", 409)
+        if set(changes) != {"server"} or type(changes["server"]) is not str or changes["server"] not in {"cloud", "local"}:
+            invalid()
+        return "POST", "/api/open/challenge/config", dict(changes), dict(changes)
     if section == "groups":
         if not capabilities(raw)["premium"]:
             raise SafeLineError("safeline_feature_unavailable", 409)

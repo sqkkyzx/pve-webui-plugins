@@ -895,7 +895,7 @@
         state.attackPages.render(context);
     }
     function navItems(selection) {
-        if (selection.kind === 'root') return [['overview', '總覽', 'fa-dashboard'], ['events', '攻擊防護', 'fa-shield'], ['policies', '防護規則', 'fa-filter'], ['connection', '連線資訊', 'fa-plug']];
+        if (selection.kind === 'root') return [['overview', '總覽', 'fa-dashboard'], ['events', '攻擊防護', 'fa-shield'], ['policies', '防護規則', 'fa-filter'], ['challenge', '人機驗證', 'fa-user-circle-o'], ['connection', '連線資訊', 'fa-plug']];
         if (!selection.id) return [['list', type(selection.kind).name, type(selection.kind).icon]].concat(selection.kind==='applications'?[['advanced','高級配置','fa-cogs']]:[]);
         if (selection.kind === 'applications') return [['basic', '基本資訊', 'fa-list-alt'], ['forwarding', '轉發規則', 'fa-exchange'], ['advanced', '高級配置', 'fa-cogs'], ['routes', '應用路由', 'fa-sitemap'], ['tamper', '網頁防篡改', 'fa-shield']];
         if (selection.kind === 'certificates') return [['summary', '概要', 'fa-list-alt'], ['info', '憑證資訊', 'fa-certificate'], ['applications', '引用應用', 'fa-globe']];
@@ -923,6 +923,7 @@
         if (selected.kind === 'root') {
             if (state.tab === 'overview') { loadOverview(state); return; }
             if (state.tab === 'events') { renderLogs(state, null); return; }
+            if (state.tab === 'challenge') { renderLogs(state, { kind: 'challenge' }); return; }
             if (state.tab === 'policies') {
                 if (state.inventory && (state.inventory.errors.deny || state.inventory.errors.allow)) note(state, message(state.inventory.errors.deny || state.inventory.errors.allow));
                 else resourceList(state, 'policies'); return;
@@ -982,7 +983,7 @@
             renderTree(state);
             status(state, (Object.keys(data.errors).length ? '部分資源無法更新 · ' : '已更新 · ') + date(data.updated_at));
             if (state.selection.kind === 'root' && state.tab === 'overview') renderOverview(state);
-            else if (!alive(state.editor) && !(state.selection.kind === 'root' && ['connection', 'events'].includes(state.tab)) && !(state.selection.kind==='applications'&&state.tab==='advanced')) renderSelection(state);
+            else if (!alive(state.editor) && !(state.selection.kind === 'root' && ['connection', 'events', 'challenge'].includes(state.tab)) && !(state.selection.kind==='applications'&&state.tab==='advanced')) renderSelection(state);
         }, function (code) {
             status(state, message(code));
             if (state.inventory) types.forEach(function (t) { state.inventory.errors[t.id] = code; state.inventory.resources[t.id].forEach(function (row) { row.stale = true; }); });

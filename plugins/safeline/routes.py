@@ -258,7 +258,7 @@ def register_routes(context, store, service):
     async def get_configuration(request: Request, section: str):
         user = await authorize(request)
         query(request, set())
-        if section not in {"proxy", "groups"}:
+        if section not in {"proxy", "groups", "challenge"}:
             raise HTTPException(422, "invalid_safeline_resource")
         try:
             return {"user": user, **await editor.load("configuration", section, "settings")}
@@ -269,7 +269,7 @@ def register_routes(context, store, service):
     async def put_configuration(request: Request, section: str):
         user = await authorize(request, write=True)
         query(request, set())
-        if section not in {"proxy", "groups"}:
+        if section not in {"proxy", "groups", "challenge"}:
             raise HTTPException(422, "invalid_safeline_resource")
         value = await command(request, EditCommand)
         try:
@@ -321,6 +321,26 @@ def register_routes(context, store, service):
     @application.get(base + "/records")
     async def records(request: Request):
         return await logs(request, events=False)
+
+    @application.get(base + "/challenges")
+    async def challenges(request: Request):
+        user = await authorize(request)
+        values = query(request, {"page", "page_size", "ip", "site", "start", "end"})
+        params = {"page": integer(values.pop("page", "1"), 1, 1_000_000),
+                  "page_size": integer(values.pop("page_size", "20"), 1, 100)}
+        for key, value in values.items():
+            if key in {"start", "end"}:
+                params[key] = integer(value, 0, 9_007_199_254_740_991)
+            elif not value or len(value) > 1024 or any(ord(c) < 32 or ord(c) == 127 for c in value):
+                raise HTTPException(422, "invalid_safeline_query")
+            else:
+                params[key] = value
+        if "start" in params and "end" in params and params["start"] > params["end"]:
+            raise HTTPException(422, "invalid_safeline_query")
+        try:
+            return {"user": user, **await service.challenges(params)}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
 
     @application.get(base + "/records/{identifier}")
     async def record_detail(request: Request, identifier: str):

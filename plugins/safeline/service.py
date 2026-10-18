@@ -294,6 +294,28 @@ class SafeLineService:
         return safe({"record": detail(value, client.connection.token), "connection_revision": revision,
                      "updated_at": now()}, client.connection.token)
 
+    async def challenges(self, params):
+        client, revision = self.client()
+        upstream = {({"start": "started_at_begin", "end": "started_at_end"}).get(key, key): value
+                    for key, value in params.items()}
+        data = await client.get("/api/open/records/challenge", upstream)
+        values = rows(data, "data")
+        total = data.get("total")
+        if type(total) is not int or not 0 <= total <= 9_007_199_254_740_991 or len(values) > params["page_size"] or total < len(values):
+            raise SafeLineError("safeline_unexpected_response")
+        items = []
+        for row in values:
+            item = {key: text(row.get(key), 1024) for key in
+                    ("event_id", "ip", "country", "province", "city", "site_title", "site_comment")}
+            for key in ("id", "site_id", "rule_id", "trigger_count", "pass_count", "dur_sec", "started_at", "ended_at"):
+                value = row.get(key)
+                item[key] = value if type(value) is int and 0 <= value <= 9_007_199_254_740_991 else None
+            names = row.get("site_server_names")
+            item["domains"] = [text(name, 253) for name in names[:128] if isinstance(name, str)] if isinstance(names, list) else []
+            item["site_name"] = item["site_comment"] or item["site_title"] or ("應用 #" + str(item["site_id"]) if item["site_id"] else "—")
+            items.append(item)
+        return safe({"items": items, "total": total, "connection_revision": revision, "updated_at": now()}, client.connection.token)
+
     async def overview(self, hours=24, *, preset="last1Day", site_id=None, utc_offset=0):
         from plugins.safeline.dashboard import PRESETS, overview
 

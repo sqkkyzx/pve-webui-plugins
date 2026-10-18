@@ -59,6 +59,8 @@ def test_all_plugin_combinations_control_html_api_and_assets(enabled, tmp_path):
             assert body.index(application_asset.encode()) < body.index(PATHS["safeline"][1].encode())
             assert body.index(attack_asset.encode()) < body.index(PATHS["safeline"][1].encode())
         assert client.get("/pve-plugins/api/safeline/applications/12/basic").status_code == (401 if "safeline" in enabled else 404)
+        for path in ("challenges", "configuration/challenge"):
+            assert client.get("/pve-plugins/api/safeline/" + path).status_code == (401 if "safeline" in enabled else 404)
         assert client.get("/pve-plugins/api/plugins").status_code == 401
         assert client.get("/?pve-plugins=off").content == DESKTOP
     generated = json.loads((tmp_path / "runtime/plugins.json").read_text())

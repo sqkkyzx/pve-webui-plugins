@@ -252,6 +252,121 @@ function replyAttackQuery(b, state, items = [attackRecord], total = 200) {
 const attackEvent = { id: 162, ip: '2001:db8::1', host: 'app.example', dst_port: 443, start_at: 1792185285000, end_at: 1792185420007, pass_count: 15, deny_count: 2, country: 'CN', province: '福建省', city: '廈門市' };
 const attackRecord = { event_id: 'log-id', src_ip: '2001:db8::1', host: 'app.example', url_path: '/login', timestamp: 1792185349, attack_type: 8, action: 0, module: 'm_php_code_injection', ja4_fingerprint: 't13_fingerprint' };
 
+const challengeRow = { id: 4, ip: '2001:db8::1', site_name: '<img onerror=alert(1)>', domains: ['app.example'], country: 'CN', province: '福建省', city: '廈門市',
+    trigger_count: 18, pass_count: 0, dur_sec: 80, started_at: 1790146412232, ended_at: 0 };
+function challengePage(b, state, extra = {}) {
+    b.reply('/connection', connection); b.reply('/inventory', inventory()); state.logHours = 24; state.logSource = 'rule';
+    state.page.down('#safeline-nav').fire('itemclick', {}, state.page.down('#safeline-nav').getStore().getById('challenge'));
+    b.reply('/challenges?page=1&page_size=20', { items: [challengeRow], total: 1, connection_revision: 1, ...extra });
+    const panel = state.page.down('#safeline-attacks');
+    return { panel, table: panel.down('#safeline-attack-grid'), form: panel.down('#safeline-attack-filters'), tools: panel.children[0].tbar.items };
+}
+function challengeConfig(b, tools, locked = []) {
+    tools.find(c => c.text === '配置').handler();
+    const dialog = b.windows.at(-1);
+    b.reply('/configuration/challenge', { values: { server: 'cloud' }, locked, capabilities: { premium: !locked.length },
+        connection_revision: 1, fingerprint: 'a'.repeat(64), updated_at: '2026-10-19T00:00:00Z' });
+    return dialog;
+}
+
+test('human verification is a root sidebar page with single-row history and separate trigger/pass columns', () => {
+    const b = browser(), state = b.enter(), { table, tools } = challengePage(b, state);
+    assert.equal(state.page.down('#safeline-nav').getStore().getById('challenge').get('name'), '人機驗證');
+    assert.equal(table.columns.map(c => c.text).join(','), '來源 IP,來源 IP 屬地,應用,域名,觸發次數,通過次數,持續時間,開始時間');
+    assert.ok(!tools.some(c => c.text === '攻擊事件' || c.text === '攻擊日誌' || c.name === 'source'));
+    const render = key => table.columns.find(c => c.dataIndex === key).renderer(challengeRow[key], {}, { data: challengeRow });
+    assert.equal(render('pass_count'), '0'); assert.equal(render('dur_sec'), '1 分 20 秒（進行中）');
+    assert.ok(render('site_name').includes('&lt;img')); assert.ok(!render('site_name').includes('<img'));
+});
+
+test('human verification filters preserve millisecond precision and never inherit attack-only query parameters', () => {
+    const b = browser(), state = b.enter(), { form, tools } = challengePage(b, state);
+    form.down('[name=ip]').value = '2001:db8::1'; form.down('[name=site]').value = '管理應用';
+    form.down('[name=start]').value = new Date(1790146412232); form.down('[name=end]').value = new Date(1790146413232);
+    tools.find(c => c.text === '篩選／刷新').handler();
+    const url = new URL('http://test.local' + b.requests.at(-1).options.url);
+    assert.equal(url.pathname, base + '/challenges'); assert.equal(url.searchParams.get('site'), '管理應用');
+    assert.equal(url.searchParams.get('start'), '1790146412232'); assert.equal(url.searchParams.get('end'), '1790146413232');
+    assert.ok(!['source', 'host', 'action', 'port', 'hours'].some(key => url.searchParams.has(key)));
+    b.reply(url.pathname.slice(base.length) + url.search, { items: [], total: 0, connection_revision: 1 });
+    const next = state.page.down('#safeline-attacks'); next.down('[name=start]').value = new Date(3000); next.down('[name=end]').value = new Date(2000);
+    const count = b.requests.length; next.children[0].tbar.items.find(c => c.text === '篩選／刷新').handler();
+    assert.equal(b.requests.length, count); assert.match(next.down('#safeline-attack-status').text, /開始時間不能晚於/);
+    next.children[0].tbar.items.find(c => c.text === '清除篩選').handler();
+    assert.equal(b.requests.at(-1).options.url, base + '/challenges?page=1&page_size=20');
+});
+
+test('human verification IP double-click opens group membership while other cells do not open attack details', () => {
+    const b = browser(), state = b.enter(), { table } = challengePage(b, state);
+    const count = b.requests.length;
+    for (const key of ['site_name', 'domains', 'trigger_count', 'pass_count', 'dur_sec', 'started_at', 'geography']) doubleCell(table, key);
+    assert.equal(b.requests.length, count);
+    doubleCell(table, 'ip'); assert.equal(b.requests.at(-1).options.url, base + '/ip-groups/append');
+    assert.equal(b.windows.at(-1).down('#safeline-ip-address').value, '2001:db8::1');
+});
+
+test('human verification fits available height independently of attack pages and respects manual sizing', () => {
+    const b = browser(), state = b.enter(); state.logFittedSizes = { records: 28, events: 31 };
+    let { table } = challengePage(b, state, { total: 200 }); fitAttackTable(b, state, table, 651);
+    assert.equal(b.requests.at(-1).options.url, base + '/challenges?page=1&page_size=26');
+    table = replyAttackQuery(b, state, [challengeRow]); assert.equal(state.logFittedSizes.challenge, 26);
+    assert.equal(state.logFittedSizes.records, 28); assert.equal(state.logFittedSizes.events, 31);
+    const picker = table.down('[name=page_size]'); picker.value = 50; picker.fire('select', picker);
+    assert.equal(b.requests.at(-1).options.url, base + '/challenges?page=1&page_size=50');
+    table = replyAttackQuery(b, state, [challengeRow]); const count = b.requests.length; fitAttackTable(b, state, table, 351);
+    assert.equal(b.requests.length, count);
+});
+
+test('background inventory refresh preserves human verification filters and does not bypass its refresh setting', () => {
+    const b = browser(), state = b.enter(), { panel, form } = challengePage(b, state);
+    form.down('[name=site]').value = 'unfinished filter'; form.dirty = true;
+    const count = b.requests.filter(r => r.options.url.includes('/challenges?')).length;
+    b.timers.delete(state.timer); state.timer.fn(); b.reply('/inventory', inventory());
+    assert.equal(state.page.down('#safeline-attacks'), panel); assert.ok(!panel.destroyed);
+    assert.equal(form.down('[name=site]').value, 'unfinished filter');
+    assert.equal(b.requests.filter(r => r.options.url.includes('/challenges?')).length, count);
+});
+
+test('challenge service configuration supplies typed choices and saves only a deliberate changed service', () => {
+    const b = browser(), state = b.enter(), { tools } = challengePage(b, state), dialog = challengeConfig(b, tools);
+    const field = dialog.down('[name=server]'); assert.equal(field.value, 'cloud'); assert.equal(field.forceSelection, true);
+    assert.equal(field.store.data.map(v => v.id).join(','), 'cloud,local');
+    field.value = 'local'; dialog.down('#safeline-challenge-config-save').handler();
+    const request = b.requests.at(-1), options = request.options;
+    assert.equal(options.url, base + '/configuration/challenge'); assert.equal(options.method, 'PUT');
+    assert.equal(options.headers['X-PVE-Plugins-CSRF'], 'csrf-value'); assert.equal(options.jsonData.expected_revision, 1);
+    assert.equal(JSON.stringify(options.jsonData.changes), '{"server":"local"}'); assert.ok(options.jsonData.operation_id);
+    assert.equal(dialog.close(), undefined); assert.ok(!dialog.destroyed);
+    b.reply('/configuration/challenge', { outcome: 'confirmed', connection_revision: 1 }, 200, request);
+    assert.equal(dialog.destroyed, true); assert.equal(state.editor, null);
+});
+
+test('personal challenge settings show the active service without issuing an unauthorized write', () => {
+    const b = browser(), state = b.enter(), { tools } = challengePage(b, state), dialog = challengeConfig(b, tools, ['server']);
+    assert.equal(dialog.down('[name=server]').value, 'cloud'); assert.equal(dialog.down('[name=server]').disabled, true);
+    assert.equal(dialog.down('#safeline-challenge-config-save').disabled, true);
+    assert.match(dialog.down('#safeline-challenge-config-status').html, /專業版或商業版/);
+    const count = b.requests.length; dialog.down('#safeline-challenge-config-save').handler(); assert.equal(b.requests.length, count);
+});
+
+test('unchanged challenge settings close without writes and late reads cannot restore a canceled window', () => {
+    const b = browser(), state = b.enter(), { tools } = challengePage(b, state); let dialog = challengeConfig(b, tools);
+    const count = b.requests.length; dialog.down('#safeline-challenge-config-save').handler();
+    assert.equal(b.requests.length, count); assert.equal(dialog.destroyed, true);
+    tools.find(c => c.text === '配置').handler(); dialog = b.windows.at(-1); dialog.down('#safeline-challenge-config-cancel').handler();
+    b.reply('/configuration/challenge', { values: { server: 'local' }, locked: [], capabilities: { premium: true }, connection_revision: 1 });
+    assert.equal(dialog.destroyed, true); assert.equal(state.editor, null);
+});
+
+test('unknown challenge service writes retain the draft and prevent resubmission', () => {
+    const b = browser(), state = b.enter(), { tools } = challengePage(b, state), dialog = challengeConfig(b, tools);
+    dialog.down('[name=server]').value = 'local'; dialog.down('#safeline-challenge-config-save').handler();
+    b.reply('/configuration/challenge', { outcome: 'unknown', code: 'safeline_write_unknown', connection_revision: 1 });
+    assert.ok(!dialog.destroyed); assert.equal(dialog.down('[name=server]').value, 'local');
+    assert.equal(dialog.down('#safeline-challenge-config-save').disabled, true); assert.equal(dialog.down('#safeline-challenge-config-cancel').disabled, false);
+    const count = b.requests.length; dialog.down('#safeline-challenge-config-save').handler(); assert.equal(b.requests.length, count);
+});
+
 test('automatic page size fits complete visible rows and resize retains the current result range', () => {
     const b = browser(), state = b.enter(); let { table } = attackPage(b, state, 'records', [attackRecord], { total: 200 });
     fitAttackTable(b, state, table, 651);

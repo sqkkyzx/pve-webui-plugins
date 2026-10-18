@@ -329,7 +329,9 @@ class ResourceEditor:
                 await client.write(method, path, payload)
                 accepted = True
                 updated = await self.raw(client, kind, identifier, section)
-                verify = updated.get("proxy", {}) if kind == "configuration" and identifier == "proxy" else {"enable": updated["groups"]} if kind == "configuration" else updated
+                verify = updated
+                if kind == "configuration":
+                    verify = {"enable": updated["groups"]} if identifier == "groups" else updated.get(identifier, {})
                 verified = all(verify.get(k) == v for k, v in patch.items())
                 if kind == "certificates":
                     verified = all(updated.get("acme", {}).get(k) == v for k, v in patch.items()) if raw["type"] == 3 else pem(updated.get("manual", {}).get("crt", "")) == pem(patch["crt"])

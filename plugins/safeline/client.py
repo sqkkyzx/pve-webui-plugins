@@ -14,7 +14,7 @@ _PATHS = {"/api/open/" + name for name in (
     "system", "system/edition", "site", "site/group", "policy", "policy/detail", "cert",
     "ipgroup", "ipgroup/detail", "events", "events/rule", "records", "records/rule",
     "security_posture/statistics", "security_posture/trends", "security_posture/realtime", "global/proxy", "site/group/switch",
-    "global/mode", "auth_defense/source", "portal", "site/0/acl",
+    "global/mode", "auth_defense/source", "portal", "site/0/acl", "records/challenge", "challenge/config",
 )} | {"/api/stat/" + name for name in (
     "qps", "advance/access", "advance/attack", "advance/trend/access", "advance/trend/intercept",
     "advance/error_status_code", "advance/location",
@@ -27,7 +27,8 @@ _WRITES = {("PUT", "/api/open/site"), ("PUT", "/api/open/site/mode"),
            ("PUT", "/api/open/policy"), ("PUT", "/api/open/policy/switch"),
            ("PUT", "/api/open/ipgroup"), ("POST", "/api/open/ipgroup"), ("POST", "/api/open/ipgroup/append"), ("POST", "/api/open/cert"),
            ("PUT", "/api/open/global/proxy"), ("PUT", "/api/commercial/site/group/switch"),
-           ("PUT", "/api/open/site/challenge"), ("PUT", "/api/open/site/defense"), ("POST", "/api/open/security_posture/site")}
+           ("PUT", "/api/open/site/challenge"), ("PUT", "/api/open/site/defense"), ("POST", "/api/open/security_posture/site"),
+           ("POST", "/api/open/challenge/config")}
 _PROXY_WRITE = re.compile(r"/api/open/site/[1-9][0-9]*/proxy\Z")
 _APP_WRITES = {
     "PUT": re.compile(r"/api/open/site/[1-9][0-9]*/(?:acl(?:/[1-9][0-9]*)?|semantics|nginx_config|forwarding_rules/[1-9][0-9]*(?:/switch)?)\Z"),
@@ -39,7 +40,8 @@ _TAMPER_WRITES = {"POST": re.compile(r"/api/business/site/[1-9][0-9]*/anti_tampe
                   "DELETE": re.compile(r"/api/business/anti_tamper/[1-9][0-9]*\Z")}
 _QUERY = {"page", "page_size", "action", "id", "start", "end", "ip", "host", "port", "event_id",
           "policy_rule_id", "begin_time", "end_time", "site_id", "time_preset", "url", "attack_type",
-          "upstream", "global", "size", "top", "type", "count", "changed", "filename", "ja4_fingerprint"}
+          "upstream", "global", "size", "top", "type", "count", "changed", "filename", "ja4_fingerprint",
+          "site", "started_at_begin", "started_at_end"}
 
 
 class _BorrowedTransport(httpx.AsyncBaseTransport):
