@@ -5,11 +5,12 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 
 const source = readFileSync(new URL('../plugins/safeline/static/safeline.js', import.meta.url), 'utf8');
+const attackSource = readFileSync(new URL('../plugins/safeline/static/attack-pages.js', import.meta.url), 'utf8');
 const applicationSource = readFileSync(new URL('../plugins/safeline/static/application-pages.js', import.meta.url), 'utf8');
 const base = '/pve-plugins/api/safeline';
 
 function browser() {
-    const classes = new Map(), stack = [], requests = [], timers = new Set(), windows = [], warnings = [];
+    const classes = new Map(), stack = [], requests = [], timers = new Set(), windows = [], warnings = [], opened = [];
     function define(name, config) {
         if (config.override) {
             const type = classes.get(config.override);
@@ -64,14 +65,15 @@ function browser() {
         on(name, fn) { (this.events[name] ||= []).push(fn); }, fire(name, ...args) { let result; for (const fn of this.events[name] || []) result = fn.apply(this, args.length ? args : [this]); return result; },
         add(value) { const c = value.events ? value : create(value.xtype === 'grid' ? 'Ext.grid.Panel' : 'Ext.Component', value); c.ownerCt = this; this.children.push(c); if (this.rendered) c.render(); return c; },
         removeAll() { for (const c of this.children) c.destroy(); this.children = []; },
-        down(selector) { for (const c of this.children) { if (selector === '#' + c.itemId || selector === c.xtype) return c; const found = c.down(selector); if (found) return found; } return null; },
+        down(selector) { for (const c of this.children) { if (selector === '#' + c.itemId || selector === c.xtype || selector === '[name=' + c.name + ']') return c; const found = c.down(selector); if (found) return found; } return null; },
         up(selector) { let p = this.ownerCt; while (p) { if (p.xtype === selector) return p; p = p.ownerCt; } return null; },
         getStore() { return this.dataStore; }, getRootNode() { return this.dataStore.root; }, getSelectionModel() { return this.selection; },
         setVisible(value) { this.hidden = !value; }, setText(value) { this.text = value; }, update(value) { this.html = value; }, setDisabled(value) { this.disabled = value; },
         getValue() { return this.xtype === 'checkbox' ? !!this.checked : this.value; }, setValue(value) { this.value = value; if (this.xtype === 'checkbox') this.checked = !!value; },
         getPlugins() { return []; },
+        getVisibleColumnManager() { return { getHeaderAtIndex: (index) => this.columns.filter(c => !c.hidden)[index] }; },
         getEl() { return { on: (name, fn) => { this.elementEvents ||= {}; this.elementEvents[name] = fn; }, down: () => ({ focus() {} }) }; },
-        getForm() { return { isValid: () => true, getValues: () => Object.fromEntries(this.children.filter((c) => c.name).map((c) => [c.name, c.getValue()])) }; },
+        getForm() { return { isValid: () => this.valid !== false, isDirty: () => !!this.dirty, getValues: () => Object.fromEntries(this.children.filter((c) => c.name).map((c) => [c.name, c.getValue()])) }; },
         render() { if (this.rendered || this.destroyed) return; this.rendered = true; for (const c of this.children) c.render(); this.fire('afterrender'); },
         destroy() { if (this.destroyed || this.destroying) return; this.destroying = true; this.fire('beforedestroy'); for (const c of this.children) c.destroy(); this.destroyed = true; this.fire('destroy'); },
         show() { this.render(); windows.push(this); }, close() { if (this.fire('beforeclose') !== false) this.destroy(); },
@@ -91,8 +93,9 @@ function browser() {
     function create(name, config = {}) { const c = new (classes.get(name) || classes.get('Ext.Component'))(config); c.initComponent(); for (const [name, fn] of Object.entries(config.listeners || {})) c.on(name, fn); return c; }
     const context = vm.createContext({ URLSearchParams, window: { Ext: { define, create, ClassManager: { get: (name) => classes.get(name) }, Ajax: {
         request(options) { const request = { options, aborted: false }; requests.push(request); return request; }, abort(request) { request.aborted = true; },
-    } }, crypto: webcrypto, Proxmox: { UserName: 'root@pam', Utils: { authOK: () => !!context.window.Proxmox.UserName } },
+    } }, crypto: webcrypto, TextEncoder, open: (...args) => opened.push(args), Proxmox: { UserName: 'root@pam', Utils: { authOK: () => !!context.window.Proxmox.UserName } },
     setTimeout(fn) { const timer = { fn }; timers.add(timer); return timer; }, clearTimeout(timer) { timers.delete(timer); }, document: { hidden: false }, console: { warn: (...args) => warnings.push(args) } } });
+    vm.runInContext(attackSource, context);
     vm.runInContext(applicationSource, context);
     vm.runInContext(source, context);
     const workspace = create('PVE.StdWorkspace'); workspace.xtype = 'pveStdWorkspace';
@@ -104,7 +107,7 @@ function browser() {
         const r = selectedRequest || requests.find((r) => !r.replied && r.options.url === base + path);
         assert.ok(r, path); r.replied = true; r.options.callback(null, status >= 200 && status < 300, { status, responseText: JSON.stringify(status === 200 ? { user: 'root@pam', ...data } : data) }); return r;
     }
-    return { context, create, workspace, native, requests, enter, reply, timers, windows, warnings, owner };
+    return { context, create, workspace, native, requests, enter, reply, timers, windows, warnings, owner, opened };
 }
 
 const connection = { configured: true, revision: 1, source: 'saved', csrf_token: 'csrf-value', connection: { url: 'https://10.101.100.101:9443', token_configured: true, tls_verify: true, tls_server_name: 'waf.example', ca_pem: '' } };
@@ -228,35 +231,108 @@ test('duplicate script registration does not wrap the selector again', () => {
     assert.equal(selector.getStore().rows.filter((row) => row.key === 'pve-safeline-waf').length, 1);
 });
 
-test('log filters use their native form, validate dates and submit documented query fields', () => {
-    const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', inventory());
-    state.logMode = 'records'; const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById('events'));
-    b.reply('/records?page=1&page_size=20&source=general', { items: [], total: 0, connection_revision: 1 });
-    const table = state.page.down('#safeline-body').children[0]; table.tbar.items.find((item) => item.text === '篩選').handler();
-    const dialog = state.editor, form = dialog.down('form');
-    const field = (name) => form.children.find((c) => c.name === name);
-    field('action').value = '1'; field('url').value = '/login'; field('start_time').value = 'invalid';
-    const before = b.requests.length; dialog.buttons[0].handler(); assert.equal(b.requests.length, before);
-    assert.ok(dialog.down('#safeline-filter-status').html.includes('ISO 8601'));
-    field('start_time').value = '2026-10-17T00:00:00Z'; field('end_time').value = '2026-10-18T00:00:00Z';
-    dialog.buttons[0].handler();
+function attackPage(b, state, mode = 'events', rows = [], extra = {}) {
+    b.reply('/connection', connection); b.reply('/inventory', inventory()); state.logMode = mode;
+    state.page.down('#safeline-nav').fire('itemclick', {}, state.page.down('#safeline-nav').getStore().getById('events'));
+    b.reply('/' + mode + '?page=1&page_size=20&source=general', { items: rows, total: rows.length, connection_revision: 1, ...extra });
+    return { panel: state.page.down('#safeline-attacks'), table: state.page.down('#safeline-attack-grid'), form: state.page.down('#safeline-attack-filters') };
+}
+function doubleCell(table, key) {
+    table.fire('celldblclick', {}, {}, table.columns.filter(c => !c.hidden).findIndex(c => c.dataIndex === key), table.getStore().rows[0]);
+}
+const attackEvent = { id: 162, ip: '2001:db8::1', host: 'app.example', dst_port: 443, start_at: 1792185285000, end_at: 1792185420007, pass_count: 15, deny_count: 2, country: 'CN', province: '福建省', city: '廈門市' };
+const attackRecord = { event_id: 'log-id', src_ip: '2001:db8::1', host: 'app.example', url_path: '/login', timestamp: 1792185349, attack_type: 8, action: 0, module: 'm_php_code_injection', ja4_fingerprint: 't13_fingerprint' };
+
+test('attack pages expose inline filters, validate date boundaries and submit JA4/type/action fields', () => {
+    const b = browser(), state = b.enter(), { panel, form } = attackPage(b, state, 'records');
+    assert.equal(state.page.down('#safeline-nav').getStore().getById('events').get('name'), '攻擊防護');
+    const field = name => form.down('[name=' + name + ']');
+    for (const name of ['ip', 'host', 'port', 'hours', 'start', 'end', 'action', 'attack_type', 'url', 'event_id', 'ja4_fingerprint', 'auto_refresh']) assert.ok(field(name), name);
+    field('action').value = '0'; field('url').value = '/login'; field('ja4_fingerprint').value = 't13_fingerprint'; field('attack_type').value = ['0', '8'];
+    field('start').value = new Date('2026-10-18T00:00:00Z'); field('end').value = new Date('2026-10-17T00:00:00Z');
+    const apply = panel.children[0].tbar.items.find(c => c.text === '篩選／刷新'), count = b.requests.length;
+    apply.handler(); assert.equal(b.requests.length, count); assert.ok(panel.down('#safeline-attack-status').text.includes('開始時間'));
+    field('end').value = new Date('2026-10-19T00:00:00Z'); apply.handler();
     const params = new URL('http://test.local' + b.requests.at(-1).options.url).searchParams;
-    assert.equal(params.get('action'), '1'); assert.equal(params.get('url'), '/login');
-    assert.equal(params.get('start'), String(Date.parse('2026-10-17T00:00:00Z')));
-    assert.equal(dialog.destroyed, true); assert.equal(state.editor, null);
+    assert.equal(params.get('action'), '0'); assert.equal(params.get('url'), '/login'); assert.equal(params.get('ja4_fingerprint'), 't13_fingerprint');
+    assert.equal(params.get('attack_type'), '0,8'); assert.equal(params.get('start'), String(Date.parse('2026-10-18T00:00:00Z')));
 });
 
-test('aggregate events query related logs by dimensions and never guess a record identifier', () => {
-    const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', inventory());
-    const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById('events'));
-    const event = { id: 162, ip: '10.0.0.1', host: 'app.example', dst_port: 443, start_at: 1792185285000, end_at: 1792185420007 };
-    b.reply('/events?page=1&page_size=20&source=general', { items: [event], total: 1, connection_revision: 1 });
-    const table = state.page.down('#safeline-body').children[0]; table.fire('itemdblclick', {}, table.getStore().rows[0]);
-    state.editor.buttons[0].handler();
-    const request = new URL('http://test.local' + b.requests.at(-1).options.url);
-    assert.equal(request.pathname, base + '/records'); assert.equal(request.searchParams.get('ip'), event.ip);
-    assert.equal(request.searchParams.get('start'), String(event.start_at)); assert.equal(request.searchParams.has('event_id'), false);
-    assert.equal(state.editor, null);
+test('event double clicks distinguish inert cells, IP portraits and related-log action filters after column reorder', () => {
+    for (const denied of [false, true]) {
+        const b = browser(), state = b.enter(), { table } = attackPage(b, state, 'events', [attackEvent]);
+        assert.equal(table.columns.map(c => c.text).join(','), '來源 IP,IP 畫像,來源 IP 屬地,應用,放行攻擊,攔截攻擊,持續時間,開始時間,結束時間');
+        const count = b.requests.length;
+        for (const key of ['geography', 'host', 'duration', 'start_at', 'end_at']) doubleCell(table, key);
+        assert.equal(b.requests.length, count); assert.equal(state.editor, null);
+        doubleCell(table, 'ip_portrait'); assert.deepEqual(b.opened[0], ['https://rivers.chaitin.cn/ip-intelligence?search=2001%3Adb8%3A%3A1', '_blank', 'noopener,noreferrer']);
+        table.columns.reverse(); table.columns.find(c => c.dataIndex === 'geography').hidden = true;
+        doubleCell(table, denied ? 'deny_count' : 'pass_count');
+        const request = new URL('http://test.local' + b.requests.at(-1).options.url);
+        assert.equal(request.pathname, base + '/records'); assert.equal(request.searchParams.get('ip'), attackEvent.ip);
+        assert.equal(request.searchParams.get('host'), attackEvent.host); assert.equal(request.searchParams.get('port'), '443');
+        assert.equal(request.searchParams.get('start'), String(attackEvent.start_at)); assert.equal(request.searchParams.get('end'), String(attackEvent.end_at));
+        assert.equal(request.searchParams.get('action'), denied ? '1' : '0'); assert.equal(request.searchParams.has('event_id'), false);
+        assert.equal(state.editor, null);
+    }
+});
+
+test('IP double clicks open multiple group selection and only explicit save sends an append command', () => {
+    const b = browser(), state = b.enter(), { table } = attackPage(b, state, 'events', [attackEvent]);
+    doubleCell(table, 'ip'); const dialog = state.editor;
+    assert.equal(dialog.title, '加入 IP 組'); assert.equal(dialog.down('#safeline-ip-address').value, attackEvent.ip);
+    b.reply('/ip-groups/append', { groups: [{ id: 4, name: '<script>group</script>' }, { id: 5, name: 'another' }], fingerprint: 'a'.repeat(64), connection_revision: 1 });
+    assert.equal(dialog.down('#safeline-ip-groups').multiSelect, true);
+    dialog.down('#safeline-ip-groups').value = [4, 5]; dialog.down('#safeline-ip-save').handler();
+    const options = b.requests.at(-1).options;
+    assert.equal(options.method, 'POST'); assert.equal(options.url, base + '/ip-groups/append'); assert.equal(options.headers['X-PVE-Plugins-CSRF'], 'csrf-value');
+    assert.deepEqual(JSON.parse(JSON.stringify(options.jsonData.changes)), { ip: attackEvent.ip, ip_group_ids: [4, 5] });
+    assert.equal(options.jsonData.fingerprint, 'a'.repeat(64)); assert.match(options.jsonData.operation_id, /^[a-f0-9-]{36}$/);
+    const count = b.requests.length; dialog.down('#safeline-ip-save').handler(); assert.equal(b.requests.length, count);
+    b.reply('/ip-groups/append', { outcome: 'unknown', connection_revision: 1 }, 200, b.requests.at(-1));
+    assert.equal(dialog.down('#safeline-ip-save').disabled, true); assert.equal(dialog.destroyed, undefined);
+    assert.equal(dialog.down('#safeline-ip-cancel').disabled, false);
+});
+
+test('new IP groups use a distinct explicit create action and confirmed saves refresh inventory', () => {
+    const b = browser(), state = b.enter(), { table } = attackPage(b, state, 'records', [attackRecord]);
+    doubleCell(table, 'src_ip'); const dialog = state.editor;
+    b.reply('/ip-groups/append', { groups: [], fingerprint: 'b'.repeat(64), connection_revision: 1 });
+    dialog.down('#safeline-ip-create').handler(); dialog.down('#safeline-ip-name').value = 'New group'; dialog.down('#safeline-ip-save').handler();
+    assert.equal(b.requests.at(-1).options.url, base + '/ip-groups');
+    assert.deepEqual(JSON.parse(JSON.stringify(b.requests.at(-1).options.jsonData.changes)), { ip: attackRecord.src_ip, comment: 'New group' });
+    b.reply('/ip-groups', { outcome: 'confirmed', connection_revision: 1 }, 200, b.requests.at(-1));
+    assert.equal(state.editor, null); assert.equal(dialog.destroyed, true); assert.equal(b.requests.at(-1).options.url, base + '/inventory');
+});
+
+test('log cells request typed details except IP/portrait and display encoded request-response packets and fingerprint links', () => {
+    const b = browser(), state = b.enter(), { table } = attackPage(b, state, 'records', [attackRecord]);
+    assert.equal(table.columns.map(c => c.text).join(','), '時間,動作,來源 IP,IP 畫像,來源 IP 屬地,HOST,路徑,攻擊類型,命中防護模組');
+    assert.ok(!b.requests.some(r => r.options.url.includes('/records/log-id')));
+    for (const key of ['timestamp', 'action', 'geography', 'host', 'url_path', 'attack_type', 'module']) {
+        doubleCell(table, key); assert.equal(b.requests.at(-1).options.url, base + '/records/log-id?source=general');
+    }
+    b.reply('/records/log-id?source=general', { record: { ...attackRecord, payload: '<script>payload</script>', req_header: 'GET / HTTP/1.1', req_body: '<img src=x onerror=alert(1)>', rsp_header: 'HTTP/1.1 403', rsp_body: 'denied' }, connection_revision: 1 }, 200, b.requests.at(-1));
+    const dialog = state.editor, summary = dialog.down('#safeline-attack-detail').children[0];
+    const packet = dialog.down('#safeline-attack-packet'); assert.ok(packet.html.includes('&lt;img')); assert.ok(!packet.html.includes('<img'));
+    summary.tbar.find(b => b.text === '查看指紋畫像').handler();
+    assert.deepEqual(b.opened.at(-1), ['https://intelligence.app.cyberserval.tech/?search=t13_fingerprint', '_blank', 'noopener,noreferrer']);
+    const packetPanel = dialog.down('#safeline-attack-detail').children[1]; packetPanel.tbar.find(b => b.text === '回應報文').handler();
+    assert.ok(packet.html.includes('HTTP/1.1 403') && packet.html.includes('denied'));
+    const recordCount = b.requests.length; doubleCell(table, 'ip_portrait'); assert.equal(b.requests.length, recordCount);
+});
+
+test('unsupported module lists omit the column and auto refresh pauses for drafts and is cancelled on navigation', () => {
+    const b = browser(), state = b.enter(), { panel, table, form } = attackPage(b, state, 'records', [], { module_in_list: false });
+    assert.ok(!table.columns.some(c => c.dataIndex === 'module'));
+    const auto = form.down('[name=auto_refresh]'); auto.value = 5; auto.fire('select', auto);
+    const pending = b.requests.at(-1);
+    b.reply(pending.options.url.slice(base.length), { items: [], total: 0, connection_revision: 1 }, 200, pending);
+    let timer = state.logTimer; assert.ok(timer && b.timers.has(timer));
+    state.page.down('#safeline-attack-filters').dirty = true; b.timers.delete(timer); const count = b.requests.length; timer.fn();
+    assert.equal(b.requests.length, count); assert.ok(state.logTimer);
+    const nav = state.page.down('#safeline-nav'); nav.fire('itemclick', {}, nav.getStore().getById('policies'));
+    assert.equal(state.logTimer, null);
 });
 
 test('partial refresh keeps stale node identity and its last successful timestamp', () => {

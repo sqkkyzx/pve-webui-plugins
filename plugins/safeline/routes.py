@@ -10,6 +10,7 @@ from plugins.safeline.client import SafeLineClient
 from plugins.safeline.connection import Connection, SafeLineError
 from plugins.safeline.editing import EditCommand, ResourceEditor
 from plugins.safeline.application_pages import ApplicationEditor, SECTIONS
+from plugins.safeline.attacks import IPGroupEditor
 from plugins.safeline.service import KINDS, now
 
 
@@ -72,6 +73,7 @@ def register_routes(context, store, service):
     base = "/pve-plugins/api/safeline"
     editor = ResourceEditor(service)
     applications = ApplicationEditor(editor)
+    ip_groups = IPGroupEditor(editor)
 
     async def authorize(request, *, write=False):
         user = await authenticator.authenticate(request)
@@ -289,7 +291,7 @@ def register_routes(context, store, service):
         user = await authorize(request)
         allowed = {"page", "page_size", "source", "host", "ip", "port", "start", "end"}
         if not events:
-            allowed |= {"action", "attack_type", "event_id", "policy_rule_id", "url"}
+            allowed |= {"action", "attack_type", "event_id", "policy_rule_id", "url", "ja4_fingerprint"}
         values = query(request, allowed)
         source = values.pop("source", "general")
         if source not in {"general", "rule"}:
@@ -319,3 +321,41 @@ def register_routes(context, store, service):
     @application.get(base + "/records")
     async def records(request: Request):
         return await logs(request, events=False)
+
+    @application.get(base + "/records/{identifier}")
+    async def record_detail(request: Request, identifier: str):
+        user = await authorize(request)
+        values = query(request, {"source"})
+        source = values.get("source", "general")
+        if source not in {"general", "rule"} or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", identifier):
+            raise HTTPException(422, "invalid_safeline_query")
+        try:
+            return {"user": user, **await service.record_detail(identifier, rule=source == "rule")}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
+    @application.get(base + "/ip-groups/append")
+    async def append_ip_options(request: Request):
+        user = await authorize(request)
+        query(request, set())
+        try:
+            return {"user": user, **await ip_groups.load()}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
+    async def save_ip_group(request, action):
+        user = await authorize(request, write=True)
+        query(request, set())
+        value = await command(request, EditCommand)
+        try:
+            return {"user": user, **await ip_groups.save(action, value, user)}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
+    @application.post(base + "/ip-groups/append")
+    async def append_ip(request: Request):
+        return await save_ip_group(request, "append")
+
+    @application.post(base + "/ip-groups")
+    async def create_ip_group(request: Request):
+        return await save_ip_group(request, "create")

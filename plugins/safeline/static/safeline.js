@@ -66,6 +66,7 @@
     function status(state, value) { const c = alive(state.tree) && state.tree.down('#safeline-tree-status'); if (c) c.setText(enc(value)); }
     function cancel(state, all) {
         state.navigation++;
+        if (state.attackPages) state.attackPages.stop();
         state.overviewSerial = (state.overviewSerial || 0) + 1; state.overviewPending = false;
         if (all) {
             state.generation++; if (state.timer) window.clearTimeout(state.timer); state.timer = null;
@@ -80,7 +81,7 @@
         state.active = false; cancel(state, true);
         if (alive(state.editor)) state.editor.destroy(); state.editor = null;
         state.connection = null; state.inventory = null; state.overview = null; state.health = null; state.origin = null; state.user = null;
-        state.selection = { kind: 'root' }; state.tab = null; state.logFilters = {}; state.logPage = 1;
+        state.selection = { kind: 'root' }; state.tab = null; state.logFilters = {}; state.logPage = 1; state.logMode = 'events'; state.logSource = 'general'; state.logHours = 0; state.logAutoRefresh = 0; state.logRelated = false;
         if (alive(state.page)) state.page.destroy(); state.page = null;
         const root = state.tree.getRootNode(); if (root) root.removeAll();
     }
@@ -884,122 +885,17 @@
             dialog.down('#safeline-resource-save').setDisabled(!operation || !Object.keys(v).length);
         }, function (code) { notice(message(code)); }, false);
     }
-    function logDetail(state, row, events) {
-        const generation = state.generation, who = user(state), values = [];
-        Object.keys(row).forEach(function (key) { values.push([key, ['start_at', 'end_at', 'updated_at'].includes(key) && events ? date(row[key], true) :
-            ['created_at', 'timestamp'].includes(key) ? date(row[key]) : row[key]]); });
-        if (!events) values.push(['內容保護', '已遮罩認證與 Cookie 標頭；請求及回應本文不在此頁展示。']);
-        let dialog;
-        const buttons = events ? [{ text: '查詢相同來源與時間的日誌', handler: function () {
-            if (!current(state, generation, who)) return;
-            state.logMode = 'records'; state.logPage = 1;
-            state.logFilters = { ip: row.ip, host: row.host, port: String(row.dst_port), start: row.start_at, end: row.end_at };
-            state.logRelated = true;
-            dialog.destroy(); renderLogs(state, null);
-        } }] : [];
-        buttons.push({ text: '關閉', handler: function () { dialog.close(); } });
-        dialog = Ext.create('Ext.window.Window', { title: events ? '安全事件詳情' : '攻擊日誌詳情', width: 820, height: 580, modal: true, constrain: true,
-            closeAction: 'destroy', layout: 'fit', items: [properties(values)], buttons: buttons,
-            listeners: { destroy: function () { if (state.editor === dialog) state.editor = null; } } });
-        state.editor = dialog; dialog.show();
-    }
-    function editLogFilters(state, context, events) {
-        if (!user(state)) return;
-        if (alive(state.editor)) state.editor.destroy();
-        const filters = state.logFilters || {}, generation = state.generation, who = user(state);
-        const fields = [
-            { xtype: 'textfield', name: 'ip', fieldLabel: '來源 IP', value: filters.ip || '' },
-            { xtype: 'textfield', name: 'host', fieldLabel: 'Host', value: filters.host || '' },
-            { xtype: 'textfield', name: 'port', fieldLabel: '端口', value: filters.port || '' },
-            { xtype: 'combo', name: 'hours', fieldLabel: '時間範圍', queryMode: 'local', editable: false, displayField: 'name', valueField: 'hours', value: state.logHours,
-                store: { fields: ['name', 'hours'], data: [{ name: '全部時間', hours: 0 }, { name: '最近 24 小時', hours: 24 }, { name: '最近 7 天', hours: 168 }, { name: '最近 30 天', hours: 720 }] } },
-            { xtype: 'textfield', name: 'start_time', fieldLabel: '自訂開始時間', emptyText: 'ISO 8601；可選', value: filters.start ? new Date(filters.start).toISOString() : '' },
-            { xtype: 'textfield', name: 'end_time', fieldLabel: '自訂結束時間', emptyText: 'ISO 8601；可選', value: filters.end ? new Date(filters.end).toISOString() : '' },
-        ];
-        if (!events) fields.push(
-            { xtype: 'combo', name: 'action', fieldLabel: '處置動作', queryMode: 'local', editable: false, displayField: 'name', valueField: 'id', value: filters.action || '',
-                store: { fields: ['id', 'name'], data: [{ id: '', name: '全部' }, { id: '0', name: '放行' }, { id: '1', name: '攔截' }] } },
-            { xtype: 'textfield', name: 'attack_type', fieldLabel: '攻擊類型代碼', value: filters.attack_type || '' },
-            { xtype: 'textfield', name: 'event_id', fieldLabel: '日誌事件 ID', value: filters.event_id || '' },
-            { xtype: 'textfield', name: 'url', fieldLabel: 'URL', value: filters.url || '' });
-        let dialog;
-        dialog = Ext.create('Ext.window.Window', { title: events ? '安全事件篩選' : '攻擊日誌篩選', width: 580, maxHeight: 750, modal: true, constrain: true, closeAction: 'destroy', layout: 'fit', scrollable: true,
-            items: [{ xtype: 'form', border: false, bodyPadding: 16, defaults: { anchor: '100%', labelWidth: 115, maxLength: 1024 }, items: fields.concat([
-                { xtype: 'displayfield', value: '自訂起訖時間優先於時間範圍。日誌事件 ID 使用日誌內的字串 ID。' },
-                { xtype: 'component', itemId: 'safeline-filter-status', html: '' }]) }],
-            buttons: [{ text: '套用', handler: function () {
-                if (!current(state, generation, who) || !alive(dialog)) return;
-                const values = dialog.down('form').getForm().getValues(), next = {};
-                ['ip', 'host', 'port', 'action', 'attack_type', 'event_id', 'url'].forEach(function (key) { const value = String(values[key] || '').trim(); if (value) next[key] = value; });
-                for (const key of ['start', 'end']) {
-                    const value = String(values[key + '_time'] || '').trim();
-                    if (value) {
-                        const parsed = Date.parse(value);
-                        if (!Number.isFinite(parsed) || parsed < 0) { dialog.down('#safeline-filter-status').update('請填寫有效的 ISO 8601 時間'); return; }
-                        next[key] = parsed;
-                    }
-                }
-                if (next.start && next.end && next.start > next.end) { dialog.down('#safeline-filter-status').update('開始時間不能晚於結束時間'); return; }
-                state.logFilters = next; state.logHours = Number(values.hours) || 0; state.logPage = 1; state.logRelated = false;
-                dialog.destroy(); renderLogs(state, context);
-            } }, { text: '取消', handler: function () { dialog.close(); } }],
-            listeners: { destroy: function () { if (state.editor === dialog) state.editor = null; } } });
-        state.editor = dialog; dialog.show();
-    }
     function renderLogs(state, context) {
-        const policy = context && ['deny', 'allow', 'policies'].includes(context.kind);
-        const application = context && context.kind === 'applications';
-        const mode = context ? 'records' : state.logMode;
-        if (application && (!context.domains.length || context.domains.some(function (d) { return d.includes('*'); }))) {
-            note(state, '此應用的域名無法精確限定日誌。請在總覽的安全事件頁，按實際 Host、端口及來源 IP 查詢。'); return;
-        }
-        if (application && !state.logFilters.host) {
-            const listener = (context.listeners || [])[0];
-            const match = String((context.ports || [])[0] || '').match(/^([1-9][0-9]{0,4})(?:_ssl)?$/);
-            const port = listener ? listener.port : match && Number(match[1]);
-            if (!port || port > 65535) { note(state, '無法核對此應用的監聽端口。請在全域安全事件頁依實際 Host／端口查詢。'); return; }
-            state.logFilters.host = context.domains[0]; state.logFilters.port = String(port);
-        }
-        const events = mode === 'events', filters = state.logFilters || {}, source = policy ? 'rule' : state.logSource;
-        const params = { page: state.logPage, page_size: 20, source: source };
-        Object.keys(filters).forEach(function (key) { if (filters[key] != null && filters[key] !== '') params[key] = filters[key]; });
-        if (policy) params.policy_rule_id = context.id;
-        if (state.logHours && !params.start) { params.end = Date.now(); params.start = params.end - state.logHours * 3600000; }
-        note(state, '正在讀取' + (events ? '安全事件' : '攻擊日誌') + '…');
-        request(state, '/' + (events ? 'events' : 'records') + '?' + new URLSearchParams(params).toString(), {}, function (data) {
-            if (!Array.isArray(data.items) || !Number.isSafeInteger(data.total) || data.total < 0) { note(state, '日誌資料格式不符'); return; }
-            const columns = events ? [
-                { text: '來源 IP', dataIndex: 'ip', width: 155 }, { text: 'Host', dataIndex: 'host', flex: 1, minWidth: 170 },
-                { text: '端口', dataIndex: 'dst_port', width: 80 }, { text: '開始', dataIndex: 'start_at', width: 175, renderer: function (v) { return enc(date(v, true)); } },
-                { text: '攔截', dataIndex: 'deny_count', width: 85 }, { text: '放行', dataIndex: 'pass_count', width: 85 },
-            ] : [
-                { text: '時間', dataIndex: 'timestamp', width: 175, renderer: function (v) { return enc(date(v)); } }, { text: '來源 IP', dataIndex: 'src_ip', width: 155 },
-                { text: 'Host', dataIndex: 'host', flex: 1, minWidth: 140 }, { text: '路徑', dataIndex: 'url_path', flex: 1, minWidth: 130 },
-                { text: '動作', dataIndex: 'action', width: 90, renderer: function (v) { return enc(({ 0: '放行', 1: '攔截' })[v] || '動作 ' + v); } },
-                { text: '原因', dataIndex: 'reason', flex: 1, minWidth: 110 },
-            ];
-            const config = grid(data.items, columns, function (row) { logDetail(state, row, events); });
-            const toolbar = [];
-            if (!context) {
-                toolbar.push({ text: '聚合事件', pressed: events, enableToggle: true, handler: function () { state.logMode = 'events'; state.logPage = 1; state.logFilters = {}; renderLogs(state, context); } },
-                    { text: '逐筆日誌', pressed: !events, enableToggle: true, handler: function () { state.logMode = 'records'; state.logPage = 1; state.logFilters = {}; renderLogs(state, context); } });
-            }
-            if (!policy) toolbar.push({ xtype: 'combo', width: 125, queryMode: 'local', editable: false, displayField: 'name', valueField: 'id', value: source,
-                store: { fields: ['id', 'name'], data: [{ id: 'general', name: '一般檢測' }, { id: 'rule', name: '自訂規則' }] },
-                listeners: { select: function (combo) { state.logSource = combo.getValue(); state.logPage = 1; renderLogs(state, context); } } });
-            toolbar.push({ text: '篩選', iconCls: 'fa fa-filter', handler: function () { editLogFilters(state, context, events); } },
-                { text: '清除篩選', handler: function () { state.logFilters = {}; state.logHours = 0; state.logPage = 1; state.logRelated = false; renderLogs(state, context); } }, '->',
-                { xtype: 'tbtext', text: enc(Object.keys(filters).map(function (key) { return key + ': ' + (['start', 'end'].includes(key) ? date(filters[key], true) : filters[key]); }).join(' · ')) });
-            config.tbar = { enableOverflow: true, items: toolbar };
-            config.bbar = [{ text: '上一頁', disabled: state.logPage <= 1, handler: function () { state.logPage--; renderLogs(state, context); } },
-                { xtype: 'tbtext', text: enc('第 ' + state.logPage + ' 頁 · 共 ' + data.total + ' 筆') },
-                { text: '下一頁', disabled: state.logPage * 20 >= data.total, handler: function () { state.logPage++; renderLogs(state, context); } }, '->',
-                { xtype: 'tbtext', text: enc(application ? '按 Host／端口查詢全域日誌；雙擊查看詳情' : state.logRelated ? '依事件來源及時間範圍篩選；雙擊查看詳情' : '雙擊查看詳情') }];
-            show(state, config);
-        }, function (code) { note(state, message(code)); }, true);
+        if (!state.attackPages) state.attackPages = window.__pveSafeLineAttackPages({ state: state, enc: enc, alive: alive,
+            date: date, amount: amount, combo: combo, grid: grid, properties: properties, message: message, uuid: uuid,
+            user: function () { return user(state); }, current: function (generation, who) { return current(state, generation, who); },
+            request: function (path, options, done, fail, page) { return request(state, path, options, done, fail, page); },
+            show: function (config) { show(state, config); }, note: function (value) { note(state, value); },
+            loadInventory: function () { loadInventory(state); } });
+        state.attackPages.render(context);
     }
     function navItems(selection) {
-        if (selection.kind === 'root') return [['overview', '總覽', 'fa-dashboard'], ['events', '安全事件', 'fa-shield'], ['policies', '防護規則', 'fa-filter'], ['connection', '連線資訊', 'fa-plug']];
+        if (selection.kind === 'root') return [['overview', '總覽', 'fa-dashboard'], ['events', '攻擊防護', 'fa-shield'], ['policies', '防護規則', 'fa-filter'], ['connection', '連線資訊', 'fa-plug']];
         if (!selection.id) return [['list', type(selection.kind).name, type(selection.kind).icon]].concat(selection.kind==='applications'?[['advanced','高級配置','fa-cogs']]:[]);
         if (selection.kind === 'applications') return [['basic', '基本資訊', 'fa-list-alt'], ['forwarding', '轉發規則', 'fa-exchange'], ['advanced', '高級配置', 'fa-cogs'], ['routes', '應用路由', 'fa-sitemap'], ['tamper', '網頁防篡改', 'fa-shield']];
         if (selection.kind === 'certificates') return [['summary', '概要', 'fa-list-alt'], ['info', '憑證資訊', 'fa-certificate'], ['applications', '引用應用', 'fa-globe']];

@@ -41,6 +41,7 @@ jobs:
           node --check plugins/temperatures/static/temperatures.js
           node --check plugins/sites/static/sites.js
           node --check plugins/safeline/static/safeline.js
+          node --check plugins/safeline/static/attack-pages.js
 
   container:
     needs: tests

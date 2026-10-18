@@ -162,7 +162,7 @@ def event(value):
 
 def record(value):
     result = take(value, ("src_ip", "host", "url_path", "dst_port", "action", "attack_type", "created_at", "timestamp", "method",
-                           "status_code", "rule_id", "policy_name", "event_id", "reason", "country", "province", "city", "module"))
+                           "status_code", "rule_id", "policy_name", "event_id", "reason", "country", "province", "city", "module", "ja4_fingerprint", "protocol"))
     for name in ("req_header", "rsp_header"):
         result[name] = re.sub(r"(?im)^([^:\r\n]+):[^\r\n]*", lambda match:
             match[1] + ": [REDACTED]" if _SECRET.search(match[1]) else match[0], text(value.get(name), 32768))
@@ -281,7 +281,18 @@ class SafeLineService:
         if total is None or total < 0:
             raise SafeLineError("safeline_unexpected_response")
         return safe({"items": [event(row) if events else record(row) for row in values], "total": total,
+                     "module_in_list": not values or all("module" in row for row in values),
                      "connection_revision": revision, "updated_at": now()}, client.connection.token)
+
+    async def record_detail(self, identifier, *, rule=False):
+        from plugins.safeline.attacks import detail
+
+        client, revision = self.client()
+        value = await client.get("/api/open/record/" + ("rule/" if rule else "") + identifier)
+        if not isinstance(value, dict) or value.get("event_id") != identifier:
+            raise SafeLineError("safeline_resource_not_found", 404)
+        return safe({"record": detail(value, client.connection.token), "connection_revision": revision,
+                     "updated_at": now()}, client.connection.token)
 
     async def overview(self, hours=24, *, preset="last1Day", site_id=None, utc_offset=0):
         from plugins.safeline.dashboard import PRESETS, overview

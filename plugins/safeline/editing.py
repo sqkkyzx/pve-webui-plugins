@@ -319,7 +319,9 @@ class ResourceEditor:
                                           self.build(copy.deepcopy(raw), command.changes, kind, identifier, section))
             if self.store.load()[1] != revision:
                 raise SafeLineError("safeline_connection_changed", 409)
-            target = fingerprint({"revision": revision, "kind": "policies" if kind in {"allow", "deny"} else kind, "id": identifier})
+            # IP membership append/create and full group edits share pending-write protection.
+            target = fingerprint({"revision": revision, "kind": "ip-groups"} if kind == "ip-groups" else
+                                 {"revision": revision, "kind": "policies" if kind in {"allow", "deny"} else kind, "id": identifier})
             self.store.reserve_edit(command.operation_id, actor, command_hash, target)
             result = {"outcome": "unknown", "code": "safeline_write_unknown"}
             accepted = False

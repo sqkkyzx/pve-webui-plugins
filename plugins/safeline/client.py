@@ -22,9 +22,10 @@ _PATHS = {"/api/open/" + name for name in (
 _SITE = re.compile(r"/api/open/site/[1-9][0-9]*(?:/(?:proxy|semantics|acl|waiting|chaos|excludes|forwarding_rules|nginx_config|resources|log(?:/limit)?))?\Z")
 _TAMPER_READ = re.compile(r"/api/business/site/[1-9][0-9]*/anti_tamper\Z")
 _CERT = re.compile(r"/api/open/cert/[1-9][0-9]*\Z")
+_RECORD = re.compile(r"/api/open/record/(?:rule/)?[A-Za-z0-9_-]{1,128}\Z")
 _WRITES = {("PUT", "/api/open/site"), ("PUT", "/api/open/site/mode"),
            ("PUT", "/api/open/policy"), ("PUT", "/api/open/policy/switch"),
-           ("PUT", "/api/open/ipgroup"), ("POST", "/api/open/cert"),
+           ("PUT", "/api/open/ipgroup"), ("POST", "/api/open/ipgroup"), ("POST", "/api/open/ipgroup/append"), ("POST", "/api/open/cert"),
            ("PUT", "/api/open/global/proxy"), ("PUT", "/api/commercial/site/group/switch"),
            ("PUT", "/api/open/site/challenge"), ("PUT", "/api/open/site/defense"), ("POST", "/api/open/security_posture/site")}
 _PROXY_WRITE = re.compile(r"/api/open/site/[1-9][0-9]*/proxy\Z")
@@ -38,7 +39,7 @@ _TAMPER_WRITES = {"POST": re.compile(r"/api/business/site/[1-9][0-9]*/anti_tampe
                   "DELETE": re.compile(r"/api/business/anti_tamper/[1-9][0-9]*\Z")}
 _QUERY = {"page", "page_size", "action", "id", "start", "end", "ip", "host", "port", "event_id",
           "policy_rule_id", "begin_time", "end_time", "site_id", "time_preset", "url", "attack_type",
-          "upstream", "global", "size", "top", "type", "count", "changed", "filename"}
+          "upstream", "global", "size", "top", "type", "count", "changed", "filename", "ja4_fingerprint"}
 
 
 class _BorrowedTransport(httpx.AsyncBaseTransport):
@@ -59,7 +60,7 @@ class SafeLineClient:
         self._slots = asyncio.Semaphore(5)
 
     async def get(self, path, params=None):
-        if (path not in _PATHS and not _SITE.fullmatch(path) and not _CERT.fullmatch(path) and not _TAMPER_READ.fullmatch(path)) or (params and not set(params) <= _QUERY):
+        if (path not in _PATHS and not _SITE.fullmatch(path) and not _CERT.fullmatch(path) and not _TAMPER_READ.fullmatch(path) and not _RECORD.fullmatch(path)) or (params and not set(params) <= _QUERY):
             raise SafeLineError("invalid_safeline_endpoint", 422)
         return await self._request("GET", path, params=params)
 
