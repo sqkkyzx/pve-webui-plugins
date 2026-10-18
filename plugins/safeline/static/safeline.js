@@ -25,6 +25,12 @@
         invalid_tls_settings: 'TLS 設定無效', safeline_resource_not_found: '此資源已不存在', safeline_resource_moved: '資源分類已變更，請刷新資源樹',
         safeline_store_unavailable: '無法讀寫本地連線設定', safeline_instance_mismatch: '連線資料屬於其他 PVE 實例',
         invalid_csrf_token: '會話校驗已更新，請重新進入此視圖', invalid_safeline_request: '設定格式無效',
+        safeline_resource_changed: '資源已被修改，請關閉視窗後重新編輯', safeline_edit_unsupported: '此資源的這些欄位目前無法安全編輯',
+        safeline_edit_incomplete: '未取得完整資源內容，無法編輯', safeline_operation_conflict: '此操作編號已用於另一項變更，請重新開啟編輯視窗',
+        safeline_operation_pending: '先前操作尚未確認，請先核對 SafeLine 中的實際設定', safeline_write_unknown: '寫入結果尚未確認，請刷新核對實際設定；不會自動重送',
+        safeline_operation_store_full: '操作紀錄已滿，暫時無法寫入', invalid_safeline_domains: '域名格式無效', invalid_safeline_ports: '端口需為 1–65535，TLS 端口請加 _ssl',
+        invalid_safeline_upstreams: '回源請填寫完整的 HTTP 或 HTTPS 地址及端口', invalid_safeline_ips: 'IP、CIDR 或 IP 範圍格式無效',
+        invalid_safeline_certificate: '請檢查 PEM 憑證及私鑰格式',
     };
     function alive(c) { return c && !c.destroyed && !c.destroying; }
     function enc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -338,6 +344,136 @@
             show(state, properties(resourceSummary(r), type(kind).name));
         }, function (code) { note(state, message(code)); }, true);
     }
+    function uuid() {
+        const crypto = window.crypto;
+        if (!crypto || typeof crypto.getRandomValues !== 'function') return null;
+        if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+        const bytes = crypto.getRandomValues(new Uint8Array(16)); bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+        const hex = Array.from(bytes, function (v) { return v.toString(16).padStart(2, '0'); }).join('');
+        return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+    }
+    function combo(name, label, value, options) {
+        return { xtype: 'combo', name: name, fieldLabel: label, value: value, queryMode: 'local', editable: false, displayField: 'name', valueField: 'id',
+            store: { fields: ['id', 'name'], data: options.map(function (v) { return { id: v[0], name: v[1] }; }) } };
+    }
+    function conditionGrid(pattern) {
+        const values = [], fields = [['src_ip', '來源 IP'], ['website', '防護應用 ID'], ['host', 'Host'], ['uri', 'URI'], ['uri_no_query', '不含參數的 URI'],
+            ['method', 'HTTP 方法'], ['req_header', '請求標頭'], ['ja4', 'JA4']];
+        const operators = [['eq', '等於'], ['not_eq', '不等於'], ['in', '屬於'], ['not_in', '不屬於'], ['has', '包含'], ['not_has', '不包含'],
+            ['prefix', '前綴'], ['re', '正則表達式'], ['exist', '存在'], ['not_exist', '不存在'], ['ja4_in', 'JA4 屬於']];
+        pattern.forEach(function (group, index) { group.forEach(function (r) { values.push({ group: index + 1, k: r.k, op: r.op, sub_k: r.sub_k || '', values: (r.v || []).join('\n'), original: r }); }); });
+        function editor(options) { return { xtype: 'combo', queryMode: 'local', editable: true, forceSelection: false, displayField: 'name', valueField: 'id',
+            store: { fields: ['id', 'name'], data: options.map(function (v) { return { id: v[0], name: v[1] }; }) } }; }
+        function label(options) { return function (v) { const item = options.find(function (a) { return a[0] === v; }); return enc(item ? item[1] : v); }; }
+        return { xtype: 'grid', itemId: 'safeline-patterns', title: '匹配條件（點擊儲存格編輯）', height: 265, border: true,
+            store: { fields: ['group', 'k', 'op', 'sub_k', 'values', 'original'], data: values }, plugins: [{ ptype: 'cellediting', clicksToEdit: 1 }],
+            columns: [{ text: '條件組', dataIndex: 'group', width: 80, editor: { xtype: 'numberfield', allowDecimals: false, minValue: 1, maxValue: 64 } },
+                { text: '匹配項', dataIndex: 'k', width: 150, editor: editor(fields), renderer: label(fields) },
+                { text: '運算子', dataIndex: 'op', width: 125, editor: editor(operators), renderer: label(operators) },
+                { text: '子鍵', dataIndex: 'sub_k', width: 145, editor: { xtype: 'textfield' }, renderer: enc },
+                { text: '匹配值（每行一項）', dataIndex: 'values', flex: 1, minWidth: 150, editor: { xtype: 'textareafield' }, renderer: function (v) { return '<div style="white-space:pre-wrap">' + enc(v) + '</div>'; } }],
+            tbar: [{ text: '新增條件', handler: function (button) { button.up('grid').getStore().add({ group: 1, k: 'src_ip', op: 'eq', sub_k: '', values: '' }); } },
+                { text: '移除所選條件', handler: function (button) { const table = button.up('grid'); table.getStore().remove(table.getSelectionModel().getSelection()); } }],
+            bbar: [{ xtype: 'tbtext', text: '同組條件全部符合；不同條件組任一組符合。應用範圍由 website 條件指定。' }] };
+    }
+    function editResource(state, section) {
+        if (!state.connection || !state.connection.csrf_token || !state.selection.id || !user(state) || alive(state.editor)) return;
+        const selected = Object.assign({}, state.selection), resource = findResource(state), generation = state.generation, who = user(state);
+        const path = '/resources/' + selected.kind + '/' + encodeURIComponent(selected.id) + '/edit?section=' + section;
+        let dialog, loaded, pending = false, operation = uuid();
+        function notice(value) { if (alive(dialog)) dialog.down('#safeline-resource-edit-status').update(enc(value)); }
+        function lines(value) { return String(value || '').split(/\r?\n/).map(function (v) { return v.trim(); }).filter(Boolean); }
+        function readValues() {
+            const result = {}, form = dialog.down('form'), original = loaded.values;
+            Object.keys(original).forEach(function (key) {
+                if (key === 'pattern') {
+                    const table = dialog.down('#safeline-patterns');
+                    if (table) {
+                        table.getPlugins().forEach(function (plugin) { if (typeof plugin.completeEdit === 'function') plugin.completeEdit(); });
+                        const groups = new Map(); table.getStore().each(function (record) {
+                            const row = record.data, index = Number(row.group);
+                            if (!Number.isInteger(index) || index < 1 || index > 64) throw new Error('條件組需為 1–64 的整數');
+                            if (!groups.has(index)) groups.set(index, []);
+                            const unchanged = row.original && row.k === row.original.k && row.op === row.original.op && row.sub_k === (row.original.sub_k || '') && row.values === (row.original.v || []).join('\n');
+                            groups.get(index).push(unchanged ? row.original : { k: String(row.k || ''), op: String(row.op || ''), sub_k: String(row.sub_k || ''), v: row.values === '' ? [] : String(row.values || '').split(/\r?\n/) });
+                        });
+                        result.pattern = Array.from(groups.keys()).sort(function (a, b) { return a-b; }).map(function (k) { return groups.get(k); });
+                    }
+                } else if (section === 'proxy') {
+                    const mode = form.down('#safeline-input-' + key).getValue(), previous = original[key];
+                    result[key] = { global: mode === 'inherit', value: typeof previous.value === 'boolean' ? mode === 'inherit' ? previous.value : mode === 'on' : String(form.down('#safeline-value-' + key).getValue() || '') };
+                } else {
+                    const field = form.down('#safeline-input-' + key), value = field.getValue();
+                    result[key] = typeof original[key] === 'boolean' ? !!value : Array.isArray(original[key]) ? lines(value) : typeof original[key] === 'number' ? Number(value) : String(value || '');
+                }
+            });
+            const changed = {};
+            Object.keys(result).forEach(function (key) { if (JSON.stringify(result[key]) !== JSON.stringify(original[key])) changed[key] = result[key]; });
+            if (selected.kind === 'certificates' && loaded.certificate_type === 2) {
+                if (!String(result.crt || '').trim()) throw new Error('請填寫新的 PEM 憑證；私鑰可留空沿用現有設定');
+                changed.crt = result.crt; changed.key = result.key;
+            }
+            return changed;
+        }
+        dialog = Ext.create('Ext.window.Window', { title: '編輯 ' + type(selected.kind).name + ' · #' + selected.id, width: selected.kind === 'deny' || selected.kind === 'allow' ? 940 : 680,
+            maxHeight: 820, modal: true, constrain: true, closeAction: 'destroy', layout: 'fit', scrollable: true,
+            items: [{ xtype: 'form', border: false, bodyPadding: 16, defaults: { anchor: '100%', labelWidth: 130 }, items: [
+                { xtype: 'displayfield', value: enc(resource && resource.name || '#' + selected.id) },
+                { xtype: 'component', itemId: 'safeline-resource-edit-status', html: '正在讀取最新設定…' }] }],
+            buttons: [{ text: '儲存', itemId: 'safeline-resource-save', disabled: true, handler: function () {
+                if (pending || !loaded || !operation || !alive(dialog) || !current(state, generation, who)) return;
+                if (!dialog.down('form').getForm().isValid()) return;
+                let changes; try { changes = readValues(); } catch (e) { notice(e.message); return; }
+                if (!Object.keys(changes).length) { notice('尚未修改設定'); return; }
+                pending = true; dialog.down('#safeline-resource-save').setDisabled(true); notice('正在儲存並核對結果…');
+                request(state, path, { method: 'PUT', headers: { 'X-PVE-Plugins-CSRF': state.connection.csrf_token },
+                    jsonData: { expected_revision: loaded.connection_revision, fingerprint: loaded.fingerprint, operation_id: operation, changes: changes } }, function (data) {
+                    pending = false; if (!alive(dialog)) return;
+                    if (data.outcome === 'confirmed') { dialog.destroy(); state.editor = null; status(state, '已儲存並確認設定'); loadInventory(state); return; }
+                    notice(data.outcome === 'failed' ? message(data.code) : message('safeline_write_unknown'));
+                    if (data.outcome === 'failed') { operation = uuid(); dialog.down('#safeline-resource-save').setDisabled(!operation); }
+                }, function (code) {
+                    pending = false; if (!alive(dialog)) return;
+                    if (code === 'safeline_connection_changed') { dialog.destroy(); cancel(state, true); state.inventory = null; loadConnection(state); return; }
+                    notice(['invalid_safeline_request', 'invalid_safeline_domains', 'invalid_safeline_ports', 'invalid_safeline_upstreams', 'invalid_safeline_ips', 'invalid_safeline_certificate',
+                        'safeline_resource_changed', 'safeline_operation_conflict', 'safeline_edit_unsupported', 'safeline_operation_pending'].includes(code) ? message(code) : message('safeline_write_unknown'));
+                    if (code.startsWith('invalid_safeline_')) dialog.down('#safeline-resource-save').setDisabled(false);
+                }, false);
+            } }, { text: '關閉', handler: function () { dialog.close(); } }],
+            listeners: { destroy: function () { if (state.editor === dialog) state.editor = null; } } });
+        state.editor = dialog; dialog.show();
+        request(state, path, {}, function (data) {
+            if (!alive(dialog)) return;
+            loaded = data;
+            const form = dialog.down('form'), v = data.values, fields = [];
+            const labels = { comment: '說明', server_names: '域名（每行一項）', ports: '監聽端口', upstreams: '回源地址（每行一項）', cert_id: 'TLS 憑證', health_check: '回源健康檢查',
+                stat_enabled: '流量統計', name: '規則名稱', log: '記錄日誌', is_enabled: '啟用規則', ips: 'IP / CIDR / 範圍', crt: '新的 PEM 憑證', key: '新的 PEM 私鑰', domains: 'ACME 域名', email: 'ACME 電子郵件' };
+            const proxyLabels = { br: 'Brotli', force_https: '強制 HTTPS', gzip: 'Gzip', host: '回源 Host', hsts: 'HSTS', hsts_max_age: 'HSTS 有效秒數', hsts_preload: 'HSTS 預載',
+                hsts_sub: 'HSTS 子域名', http2: 'HTTP/2', http3: 'HTTP/3', 'http_1.0': 'HTTP/1.0', ipv6: 'IPv6', ssl_ciphers: 'TLS 密碼套件', ssl_protocols: 'TLS 協定', sse: 'SSE', reset_xff: '重設 X-Forwarded-For' };
+            Object.keys(v).forEach(function (key) {
+                let field;
+                if (key === 'pattern') { fields.push(conditionGrid(v.pattern)); return; }
+                if (section === 'proxy') {
+                    const item = v[key], bool = typeof item.value === 'boolean';
+                    field = combo(key, proxyLabels[key] || key, item.global ? 'inherit' : bool ? item.value ? 'on' : 'off' : 'local', bool ? [['inherit', '沿用全域'], ['on', '啟用'], ['off', '停用']] : [['inherit', '沿用全域'], ['local', '此應用設定']]);
+                    if (!bool) fields.push({ xtype: 'textfield', itemId: 'safeline-value-' + key, fieldLabel: (proxyLabels[key] || key) + ' · 值', value: item.value, maxLength: 4096 });
+                } else if (key === 'mode') field = combo(key, '運作模式', v.mode, [[0, '防護模式'], [2, '觀察模式'], [1, '離線模式']]);
+                else if (key === 'cert_id') field = combo(key, labels[key], v[key], [[0, '不指定憑證']].concat((state.inventory.resources.certificates || []).map(function (r) { return [Number(r.id), r.name + ' · #' + r.id]; })));
+                else if (typeof v[key] === 'boolean') field = { xtype: 'checkbox', name: key, fieldLabel: labels[key] || key, checked: v[key] };
+                else field = { xtype: Array.isArray(v[key]) || key === 'crt' || key === 'key' ? 'textareafield' : 'textfield', name: key, fieldLabel: labels[key] || key,
+                    value: Array.isArray(v[key]) ? v[key].join('\n') : v[key], height: key === 'crt' || key === 'key' ? 140 : Array.isArray(v[key]) ? 90 : undefined,
+                    maxLength: key === 'crt' ? 65536 : key === 'key' ? 16384 : key === 'ips' ? 95000 : 65536, inputAttrTpl: key === 'key' ? 'autocomplete="off" spellcheck="false"' : undefined };
+                field.itemId = 'safeline-input-' + key; fields.push(field);
+            });
+            if (selected.kind === 'applications' && section === 'settings') fields.push({ xtype: 'displayfield', value: 'TLS 端口格式為 443_ssl，普通端口格式為 80。回源需包含 http:// 或 https://。' });
+            if (section === 'mode') fields.push({ xtype: 'displayfield', value: '觀察模式用於觀察攻擊；離線模式會拒絕此應用的訪問。其他規則仍依 SafeLine 設定生效。' });
+            if (selected.kind === 'certificates') fields.push({ xtype: 'displayfield', value: data.certificate_type === 2 ? '更新會作用於引用此憑證的應用。私鑰留空沿用現有私鑰；現有私鑰不會回填。' : '更新 ACME 域名與電子郵件，憑證簽發結果以 SafeLine 為準。' });
+            if (data.locked.length) fields.push({ xtype: 'displayfield', value: '部分欄位含敏感內容或不支援的條件，維持原設定；仍可編輯其餘欄位。' });
+            fields.forEach(function (field) { form.add(field); });
+            notice(operation ? '儲存前會再次檢查資源是否已變更。' : '此瀏覽器無法產生操作編號，暫時無法儲存。');
+            dialog.down('#safeline-resource-save').setDisabled(!operation || !Object.keys(v).length);
+        }, function (code) { notice(message(code)); }, false);
+    }
     function logDetail(state, row, events) {
         const generation = state.generation, who = user(state), values = [];
         Object.keys(row).forEach(function (key) { values.push([key, ['start_at', 'end_at', 'updated_at'].includes(key) && events ? date(row[key], true) :
@@ -470,6 +606,10 @@
         nav.getSelectionModel().select(nav.getStore().getById(state.tab), false, true);
         const resource = selected.id && findResource(state);
         title.setText(enc('SafeLine WAF' + (selected.kind !== 'root' ? ' / ' + type(selected.kind).name : '') + (resource ? ' / ' + resource.name : '')));
+        const edit = state.page.down('#safeline-resource-edit'), mode = state.page.down('#safeline-resource-mode'), toggle = state.page.down('#safeline-resource-switch');
+        if (edit) { edit.setVisible(!!resource); edit.setDisabled(!resource || !!resource.stale || resource.builtin && ['deny', 'allow', 'policies'].includes(selected.kind) || selected.kind === 'policies'); }
+        if (mode) { mode.setVisible(!!resource && selected.kind === 'applications'); mode.setDisabled(!resource || !!resource.stale); }
+        if (toggle) { toggle.setVisible(!!resource && ['deny', 'allow', 'policies'].includes(selected.kind)); toggle.setDisabled(!resource || !!resource.stale); }
         if (!state.connection) { note(state, '正在讀取連線設定…'); return; }
         if (selected.kind === 'root' && state.tab === 'connection') { renderConnection(state); return; }
         if (!state.connection.configured) { note(state, '尚未設定 SafeLine。請在「連線資訊」中填寫管理地址及 API Token。'); return; }
@@ -490,6 +630,9 @@
         if (alive(state.page)) return;
         state.workspace.setContent({ xtype: 'panel', itemId: 'pve-safeline-content', border: false, header: false, layout: 'border', pveSafeLinePage: true,
             tbar: [{ xtype: 'tbtext', itemId: 'safeline-heading', text: 'SafeLine WAF' }, '->', { text: '刷新', iconCls: 'fa fa-refresh', handler: function () { refresh(state); } },
+                { text: '編輯', itemId: 'safeline-resource-edit', iconCls: 'fa fa-pencil', hidden: true, handler: function () { editResource(state, state.selection.kind === 'applications' && state.tab === 'proxy' ? 'proxy' : 'settings'); } },
+                { text: '運作模式', itemId: 'safeline-resource-mode', iconCls: 'fa fa-play-circle-o', hidden: true, handler: function () { editResource(state, 'mode'); } },
+                { text: '規則啟停', itemId: 'safeline-resource-switch', iconCls: 'fa fa-power-off', hidden: true, handler: function () { editResource(state, 'switch'); } },
                 { text: '開啟 SafeLine', iconCls: 'fa fa-external-link', handler: function () {
                     const url = state.connection && state.connection.connection.url;
                     if (url && /^https:\/\//.test(url)) window.open(url, '_blank', 'noopener,noreferrer');

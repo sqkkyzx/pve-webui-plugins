@@ -1,4 +1,4 @@
-"""PVE-authenticated configuration and read-only SafeLine resource endpoints."""
+"""PVE-authenticated SafeLine pages and explicit, CSRF-protected resource edits."""
 
 import json
 import re
@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 
 from plugins.safeline.client import SafeLineClient
 from plugins.safeline.connection import Connection, SafeLineError
+from plugins.safeline.editing import EditCommand, ResourceEditor
 from plugins.safeline.service import KINDS, now
 
 
@@ -33,6 +34,10 @@ def _pairs(pairs):
     return result
 
 
+def _constant(value):
+    raise ValueError
+
+
 async def command(request, model):
     if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
         raise HTTPException(415, "json_required")
@@ -42,7 +47,7 @@ async def command(request, model):
             raise HTTPException(413, "safeline_request_too_large")
         body.extend(chunk)
     try:
-        return model.model_validate(json.loads(body, object_pairs_hook=_pairs))
+        return model.model_validate(json.loads(body, object_pairs_hook=_pairs, parse_constant=_constant))
     except (ValueError, TypeError, UnicodeError, RecursionError, ValidationError):
         # Pydantic's default validation error includes submitted passwords.
         raise HTTPException(422, "invalid_safeline_request") from None
@@ -64,6 +69,7 @@ def integer(value, minimum, maximum):
 def register_routes(context, store, service):
     application, authenticator, csrf = context.application, context.authenticator, context.csrf
     base = "/pve-plugins/api/safeline"
+    editor = ResourceEditor(service)
 
     async def authorize(request, *, write=False):
         user = await authenticator.authenticate(request)
@@ -104,7 +110,8 @@ def register_routes(context, store, service):
         query(request, set())
         value = await command(request, ConnectionCommand)
         try:
-            store.save(draft(value), value.expected_revision)
+            async with editor.lock:
+                store.save(draft(value), value.expected_revision)
             return connection_response(request, user)
         except SafeLineError as error:
             raise HTTPException(error.status, error.code) from None
@@ -115,7 +122,8 @@ def register_routes(context, store, service):
         query(request, set())
         value = await command(request, Revision)
         try:
-            store.save(None, value.expected_revision)
+            async with editor.lock:
+                store.save(None, value.expected_revision)
             return connection_response(request, user)
         except SafeLineError as error:
             raise HTTPException(error.status, error.code) from None
@@ -178,6 +186,32 @@ def register_routes(context, store, service):
             raise HTTPException(422, "invalid_safeline_query")
         try:
             return {"user": user, **await service.overview(hours)}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
+    def edit_section(request, kind, identifier):
+        section = query(request, {"section"}).get("section", "settings")
+        if kind not in {*KINDS, "policies"} or section not in {"settings", "mode", "switch", "proxy"}:
+            raise HTTPException(422, "invalid_safeline_resource")
+        integer(identifier, 1, 9_007_199_254_740_991)
+        return section
+
+    @application.get(base + "/resources/{kind}/{identifier}/edit")
+    async def edit_resource(request: Request, kind: str, identifier: str):
+        user = await authorize(request)
+        section = edit_section(request, kind, identifier)
+        try:
+            return {"user": user, **await editor.load(kind, identifier, section)}
+        except SafeLineError as error:
+            raise HTTPException(error.status, error.code) from None
+
+    @application.put(base + "/resources/{kind}/{identifier}/edit")
+    async def save_resource(request: Request, kind: str, identifier: str):
+        user = await authorize(request, write=True)
+        section = edit_section(request, kind, identifier)
+        value = await command(request, EditCommand)
+        try:
+            return {"user": user, **await editor.save(kind, identifier, section, value, user)}
         except SafeLineError as error:
             raise HTTPException(error.status, error.code) from None
 

@@ -2,12 +2,14 @@
 
 from dataclasses import dataclass, field
 import ipaddress
+import json
 import os
 from pathlib import Path
 import re
 import sqlite3
 import ssl
 import threading
+import time
 from urllib.parse import urlsplit
 
 import certifi
@@ -112,6 +114,9 @@ class ConnectionStore:
                 id INTEGER PRIMARY KEY CHECK (id=1), pve_origin TEXT NOT NULL,
                 url TEXT NOT NULL, token TEXT NOT NULL, tls_verify INTEGER NOT NULL,
                 tls_server_name TEXT NOT NULL, ca_pem TEXT NOT NULL, revision INTEGER NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS edits (
+                operation_id TEXT PRIMARY KEY, actor TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                target TEXT NOT NULL, created REAL NOT NULL, result TEXT)""")
             row = db.execute("SELECT pve_origin FROM connection WHERE id=1").fetchone()
             if row and row[0] != self.pve_origin:
                 raise SafeLineError("safeline_instance_mismatch", 503)
@@ -143,6 +148,48 @@ class ConnectionStore:
                 return None, 0, "none"
             except (OSError, sqlite3.Error, TypeError, ValueError):
                 raise SafeLineError("safeline_store_unavailable", 503) from None
+
+    def receipt(self, operation_id, actor, fingerprint):
+        """Only hashes and fixed outcome codes are durable; never request values."""
+        with self._lock:
+            try:
+                row = self._db().execute("SELECT * FROM edits WHERE operation_id=?", (operation_id,)).fetchone()
+                if row is None:
+                    return None
+                if row["actor"] != actor or row["fingerprint"] != fingerprint:
+                    raise SafeLineError("safeline_operation_conflict", 409)
+                return json.loads(row["result"]) if row["result"] else {"outcome": "unknown", "code": "safeline_operation_pending"}
+            except (sqlite3.Error, ValueError):
+                raise SafeLineError("safeline_store_unavailable", 503) from None
+
+    def reserve_edit(self, operation_id, actor, fingerprint, target):
+        with self._lock:
+            db = self._db()
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM edits WHERE operation_id=?", (operation_id,)).fetchone():
+                    raise SafeLineError("safeline_operation_conflict", 409)
+                if db.execute("SELECT 1 FROM edits WHERE target=? AND result IS NULL", (target,)).fetchone():
+                    raise SafeLineError("safeline_operation_pending", 409)
+                if db.execute("SELECT COUNT(*) FROM edits").fetchone()[0] >= 16384:
+                    raise SafeLineError("safeline_operation_store_full", 503)
+                db.execute("INSERT INTO edits VALUES(?,?,?,?,?,NULL)", (operation_id, actor, fingerprint, target, time.time()))
+                db.commit()
+            except SafeLineError:
+                db.rollback()
+                raise
+            except sqlite3.Error:
+                db.rollback()
+                raise SafeLineError("safeline_store_unavailable", 503) from None
+
+    def finish_edit(self, operation_id, result):
+        with self._lock:
+            try:
+                self._db().execute("UPDATE edits SET result=? WHERE operation_id=? AND result IS NULL",
+                                   (json.dumps(result, separators=(",", ":")), operation_id))
+            except sqlite3.Error:
+                # The pending reservation survives and cannot be replayed.
+                raise SafeLineError("safeline_operation_pending", 503) from None
 
     def save(self, config, expected_revision):
         with self._lock:

@@ -1,4 +1,4 @@
-"""SafeLine configuration, read-only API boundary and independent lifecycle."""
+"""SafeLine configuration, read API boundary and independent lifecycle."""
 
 import asyncio
 import json
@@ -24,7 +24,7 @@ URL = "https://waf.example:9443"
 def waf_handler(state):
     def handler(request):
         state["waf"].append(request)
-        assert request.method == "GET", "This release cannot mutate SafeLine"
+        assert request.method == "GET", "Read routes must never mutate SafeLine"
         assert request.headers["x-slce-api-token"] == state.get("token", TOKEN)
         assert not {"cookie", "authorization", "x-pve-plugins-csrf", "csrfpreventiontoken"} & set(request.headers)
         path = request.url.path

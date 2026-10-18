@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 
 const source = readFileSync(new URL('../plugins/safeline/static/safeline.js', import.meta.url), 'utf8');
 const base = '/pve-plugins/api/safeline';
@@ -38,6 +39,9 @@ function browser() {
     function store(config = {}) {
         const s = { rows: [], loadData(data) { this.rows = data.map((v) => ({ data: v, get: (k) => v[k], getId: () => v.id })); },
             getById(id) { return this.rows.find((r) => r.getId() === id); }, clearFilter() {}, filterBy(fn) { this.rows = this.rows.filter(fn); } };
+        s.each = (fn) => s.rows.forEach(fn);
+        s.add = (v) => s.rows.push({ data: v, get: (k) => v[k], getId: () => v.id });
+        s.remove = (rows) => { s.rows = s.rows.filter((row) => !rows.includes(row)); };
         s.loadData(config.data || []);
         if (config.root) {
             s.root = node(config.root); for (const c of config.root.children || []) s.root.appendChild(c);
@@ -63,6 +67,7 @@ function browser() {
         getStore() { return this.dataStore; }, getRootNode() { return this.dataStore.root; }, getSelectionModel() { return this.selection; },
         setVisible(value) { this.hidden = !value; }, setText(value) { this.text = value; }, update(value) { this.html = value; }, setDisabled(value) { this.disabled = value; },
         getValue() { return this.xtype === 'checkbox' ? !!this.checked : this.value; }, setValue(value) { this.value = value; },
+        getPlugins() { return []; },
         getForm() { return { isValid: () => true, getValues: () => Object.fromEntries(this.children.filter((c) => c.name).map((c) => [c.name, c.getValue()])) }; },
         render() { if (this.rendered || this.destroyed) return; this.rendered = true; for (const c of this.children) c.render(); this.fire('afterrender'); },
         destroy() { if (this.destroyed || this.destroying) return; this.destroying = true; this.fire('beforedestroy'); for (const c of this.children) c.destroy(); this.destroyed = true; this.fire('destroy'); },
@@ -83,7 +88,7 @@ function browser() {
     function create(name, config = {}) { const c = new (classes.get(name) || classes.get('Ext.Component'))(config); c.initComponent(); for (const [name, fn] of Object.entries(config.listeners || {})) c.on(name, fn); return c; }
     const context = vm.createContext({ URLSearchParams, window: { Ext: { define, create, ClassManager: { get: (name) => classes.get(name) }, Ajax: {
         request(options) { const request = { options, aborted: false }; requests.push(request); return request; }, abort(request) { request.aborted = true; },
-    } }, Proxmox: { UserName: 'root@pam', Utils: { authOK: () => !!context.window.Proxmox.UserName } },
+    } }, crypto: webcrypto, Proxmox: { UserName: 'root@pam', Utils: { authOK: () => !!context.window.Proxmox.UserName } },
     setTimeout(fn) { const timer = { fn }; timers.add(timer); return timer; }, clearTimeout(timer) { timers.delete(timer); }, document: { hidden: false }, console: { warn: (...args) => warnings.push(args) } } });
     vm.runInContext(source, context);
     const workspace = create('PVE.StdWorkspace'); workspace.xtype = 'pveStdWorkspace';
@@ -215,4 +220,70 @@ test('partial refresh keeps stale node identity and its last successful timestam
     assert.equal(previous.get('iconCls'), 'fa fa-globe unknown');
     assert.equal(state.inventory.resources.applications[0].observed_at, '2026-10-18T12:00:00Z');
     state.page.destroy(); assert.equal(state.active, false); assert.equal(b.timers.size, 0);
+});
+
+function openResourceEditor(b, state, section = 'settings', values = { comment: 'before' }, kind = 'applications') {
+    const data = inventory('before');
+    if (kind !== 'applications') data.resources[kind] = [{ id: '12', kind, name: 'before', status: { code: 'running', label: '啟用' } }];
+    b.reply('/connection', connection); b.reply('/inventory', data);
+    state.tree.fire('itemclick', {}, state.tree.getStore().getNodeById(kind + ':12'));
+    const button = state.page.down(section === 'mode' ? '#safeline-resource-mode' : section === 'switch' ? '#safeline-resource-switch' : '#safeline-resource-edit');
+    assert.equal(button.hidden, false); assert.equal(button.disabled, false); button.handler();
+    const path = '/resources/' + kind + '/12/edit?section=' + section;
+    b.reply(path, { values, locked: [], fingerprint: 'a'.repeat(64), connection_revision: 1, certificate_type: kind === 'certificates' ? 2 : null });
+    return { path, dialog: state.editor };
+}
+
+test('resource editor submits only changed fields with a revision, fingerprint, UUID and CSRF', () => {
+    const b = browser(), state = b.enter();
+    const { path, dialog } = openResourceEditor(b, state);
+    dialog.down('#safeline-input-comment').value = 'after';
+    dialog.down('#safeline-resource-save').handler();
+    const options = b.requests.at(-1).options;
+    assert.equal(options.url, base + path); assert.equal(options.method, 'PUT');
+    assert.deepEqual(JSON.parse(JSON.stringify(options.jsonData.changes)), { comment: 'after' });
+    assert.equal(options.jsonData.fingerprint, 'a'.repeat(64)); assert.equal(options.jsonData.expected_revision, 1);
+    assert.match(options.jsonData.operation_id, /^[a-f0-9-]{36}$/); assert.equal(options.headers['X-PVE-Plugins-CSRF'], 'csrf-value');
+    const count = b.requests.length; dialog.down('#safeline-resource-save').handler(); assert.equal(b.requests.length, count);
+    b.reply(path, { outcome: 'confirmed', connection_revision: 1 }, 200, b.requests.at(-1));
+    assert.equal(dialog.destroyed, true); assert.equal(state.editor, null);
+    assert.ok(b.requests.some((request) => request.options.url === base + '/inventory' && !request.replied));
+});
+
+test('mode editor and policy switch use explicit selections and do not overwrite resource settings', () => {
+    for (const [kind, section, values, key, next] of [['applications', 'mode', { mode: 0 }, 'mode', 2], ['deny', 'switch', { is_enabled: true }, 'is_enabled', false]]) {
+        const b = browser(), state = b.enter(), { dialog } = openResourceEditor(b, state, section, values, kind);
+        const field = dialog.down('#safeline-input-' + key); if (key === 'is_enabled') field.checked = next; else field.value = next;
+        dialog.down('#safeline-resource-save').handler();
+        assert.deepEqual(JSON.parse(JSON.stringify(b.requests.at(-1).options.jsonData.changes)), { [key]: next });
+    }
+});
+
+test('resource conflicts and unknown writes keep the draft and prevent automatic resubmission', () => {
+    for (const conflict of [true, false]) {
+        const b = browser(), state = b.enter(), { path, dialog } = openResourceEditor(b, state);
+        dialog.down('#safeline-input-comment').value = 'after'; dialog.down('#safeline-resource-save').handler();
+        b.reply(path, conflict ? { detail: 'safeline_resource_changed' } : { outcome: 'unknown', connection_revision: 1 }, conflict ? 409 : 200, b.requests.at(-1));
+        assert.equal(dialog.destroyed, undefined); assert.equal(dialog.down('#safeline-resource-save').disabled, true);
+        assert.ok(dialog.down('#safeline-resource-edit-status').html.includes(conflict ? '資源已被修改' : '不會自動重送'));
+        const count = b.requests.length; for (const timer of [...b.timers]) timer.fn();
+        assert.equal(b.requests.length, count, 'polling stays paused while the edit window is open');
+    }
+});
+
+test('unchanged policy conditions preserve whitespace, empty values and existing operators', () => {
+    const b = browser(), state = b.enter();
+    const pattern = [[{ k: 'req_header', op: 'future_operator', v: [' keep spaces ', ''] }]];
+    const { dialog } = openResourceEditor(b, state, 'settings', { name: 'before', log: true, pattern }, 'deny');
+    dialog.down('#safeline-input-name').value = 'renamed'; dialog.down('#safeline-resource-save').handler();
+    assert.deepEqual(JSON.parse(JSON.stringify(b.requests.at(-1).options.jsonData.changes)), { name: 'renamed' });
+});
+
+test('certificate editor starts blank and only sends a new certificate when explicitly saved', () => {
+    const b = browser(), state = b.enter(), { dialog } = openResourceEditor(b, state, 'settings', { crt: '', key: '' }, 'certificates');
+    assert.equal(dialog.down('#safeline-input-key').value, '');
+    const count = b.requests.length; dialog.down('#safeline-resource-save').handler(); assert.equal(b.requests.length, count);
+    dialog.down('#safeline-input-crt').value = 'new-public-pem'; dialog.down('#safeline-resource-save').handler();
+    assert.deepEqual(JSON.parse(JSON.stringify(b.requests.at(-1).options.jsonData.changes)), { crt: 'new-public-pem', key: '' });
+    b.workspace.onLogin(null); assert.equal(dialog.destroyed, true); assert.equal(state.editor, null);
 });

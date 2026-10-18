@@ -1,4 +1,4 @@
-"""Read-only, bounded SafeLine API client with an explicit endpoint allowlist."""
+"""Bounded SafeLine client with separate read and write endpoint allowlists."""
 
 import asyncio
 import json
@@ -16,6 +16,11 @@ _PATHS = {"/api/open/" + name for name in (
     "qps", "advance/access", "advance/attack", "advance/trend/access", "advance/trend/intercept",
 )}
 _SITE = re.compile(r"/api/open/site/[1-9][0-9]*(?:/(?:proxy|semantics|acl))?\Z")
+_CERT = re.compile(r"/api/open/cert/[1-9][0-9]*\Z")
+_WRITES = {("PUT", "/api/open/site"), ("PUT", "/api/open/site/mode"),
+           ("PUT", "/api/open/policy"), ("PUT", "/api/open/policy/switch"),
+           ("PUT", "/api/open/ipgroup"), ("POST", "/api/open/cert")}
+_PROXY_WRITE = re.compile(r"/api/open/site/[1-9][0-9]*/proxy\Z")
 _QUERY = {"page", "page_size", "action", "id", "start", "end", "ip", "host", "port", "event_id",
           "policy_rule_id", "begin_time", "end_time", "site_id", "time_preset", "url", "attack_type"}
 
@@ -38,8 +43,16 @@ class SafeLineClient:
         self._slots = asyncio.Semaphore(5)
 
     async def get(self, path, params=None):
-        if (path not in _PATHS and not _SITE.fullmatch(path)) or (params and not set(params) <= _QUERY):
+        if (path not in _PATHS and not _SITE.fullmatch(path) and not _CERT.fullmatch(path)) or (params and not set(params) <= _QUERY):
             raise SafeLineError("invalid_safeline_endpoint", 422)
+        return await self._request("GET", path, params=params)
+
+    async def write(self, method, path, payload):
+        if (method, path) not in _WRITES and not (method == "PUT" and _PROXY_WRITE.fullmatch(path)):
+            raise SafeLineError("invalid_safeline_endpoint", 422)
+        return await self._request(method, path, payload=payload)
+
+    async def _request(self, method, path, *, params=None, payload=None):
         if self.connection is None:
             raise SafeLineError("safeline_not_configured", 409)
         config = self.connection
@@ -54,7 +67,7 @@ class SafeLineClient:
                 verify=config.verify(), trust_env=False, follow_redirects=False,
                 timeout=httpx.Timeout(15, connect=5), transport=_BorrowedTransport(self.transport) if self.transport else None,
             ) as client:
-                async with client.stream("GET", config.url + path, params=params, headers=headers, extensions=extensions) as response:
+                async with client.stream(method, config.url + path, params=params, json=payload, headers=headers, extensions=extensions) as response:
                     if response.status_code in {401, 403}:
                         raise SafeLineError("safeline_invalid_credentials" if response.status_code == 401 else "safeline_permission_denied")
                     if response.status_code == 404:
