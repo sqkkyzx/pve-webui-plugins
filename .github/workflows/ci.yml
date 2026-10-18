@@ -40,6 +40,7 @@ jobs:
           node --check plugins/komodo/static/extension.js
           node --check plugins/temperatures/static/temperatures.js
           node --check plugins/sites/static/sites.js
+          node --check plugins/safeline/static/safeline.js
 
   container:
     needs: tests
@@ -63,7 +64,7 @@ jobs:
           PY
       - name: Build amd64 image
         run: docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$GITHUB_SHA" -t pve-webui-plugins:ci .
-      - name: Verify all eight combinations in non-root read-only containers
+      - name: Verify all sixteen combinations in non-root read-only containers
         run: python3 scripts/smoke_image.py pve-webui-plugins:ci
       - name: Build debug image
         run: docker build --platform linux/amd64 --target debug --build-arg SOURCE_REVISION="$GITHUB_SHA" -t pve-webui-plugins:debug-ci .

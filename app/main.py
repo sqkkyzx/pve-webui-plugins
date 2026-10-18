@@ -16,7 +16,7 @@ from app.settings import Settings
 
 
 LOGGER = logging.getLogger("pve_webui_plugins")
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 
 # Reject unknown desktop shapes instead of injecting into login providers,
@@ -59,6 +59,7 @@ def create_app(
     pve_auth_transport: httpx.AsyncBaseTransport | None = None,
     komodo_transport: httpx.AsyncBaseTransport | None = None,
     temperature_transport: httpx.AsyncBaseTransport | None = None,
+    plugin_transports: dict[str, httpx.AsyncBaseTransport] | None = None,
 ) -> FastAPI:
     config = settings or Settings.from_env()
     tls = config.tls_context()
@@ -88,7 +89,7 @@ def create_app(
 
     application = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     context = PluginContext(application, config, authenticator, CsrfProtector(),
-                            {"pve_auth": pve_auth_transport, "komodo": komodo_transport,
+                            {**(plugin_transports or {}), "pve_auth": pve_auth_transport, "komodo": komodo_transport,
                              "temperature": temperature_transport})
     for plugin in selected:
         handles[plugin.id] = load_plugin(plugin, context)

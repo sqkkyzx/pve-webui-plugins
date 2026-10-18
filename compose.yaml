@@ -23,6 +23,11 @@ services:
       PVE_KOMODO_API_KEY: ${PVE_KOMODO_API_KEY:-}
       PVE_KOMODO_API_SECRET: ${PVE_KOMODO_API_SECRET:-}
       PVE_KOMODO_TLS_VERIFY: ${PVE_KOMODO_TLS_VERIFY:-true}
+      SAFELINE_URL: ${SAFELINE_URL:-}
+      SAFELINE_API_TOKEN: ${SAFELINE_API_TOKEN:-}
+      SAFELINE_CA_FILE: ${SAFELINE_CA_FILE:-}
+      SAFELINE_TLS_SERVER_NAME: ${SAFELINE_TLS_SERVER_NAME:-}
+      SAFELINE_STATE_FILE: /app/data/safeline/connection.sqlite3
     volumes:
       - ./data:/app/data
     tmpfs:

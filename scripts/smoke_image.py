@@ -16,6 +16,7 @@ PLUGINS = {
     "komodo": ("/pve-plugins/api/komodo/connection", "/pve-plugins/assets/komodo/extension.js", "extension.js"),
     "temperatures": ("/pve-plugins/api/temperatures/nodes/pve-a", "/pve-plugins/assets/temperatures/temperatures.js", "temperatures.js"),
     "sites": ("/pve-plugins/api/sites", "/pve-plugins/assets/sites/sites.js", "sites.js"),
+    "safeline": ("/pve-plugins/api/safeline/connection", "/pve-plugins/assets/safeline/safeline.js", "safeline.js"),
 }
 
 

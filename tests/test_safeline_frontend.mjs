@@ -1,0 +1,171 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+import vm from 'node:vm';
+
+const source = readFileSync(new URL('../plugins/safeline/static/safeline.js', import.meta.url), 'utf8');
+const base = '/pve-plugins/api/safeline';
+
+function browser() {
+    const classes = new Map(), stack = [], requests = [], timers = new Set(), windows = [], warnings = [];
+    function define(name, config) {
+        if (config.override) {
+            const type = classes.get(config.override);
+            for (const [key, fn] of Object.entries(config)) {
+                if (typeof fn !== 'function') continue;
+                const previous = type.prototype[key];
+                type.prototype[key] = function (...args) { stack.push(previous); try { return fn.apply(this, args); } finally { stack.pop(); } };
+            }
+            return;
+        }
+        const Parent = classes.get(config.extend);
+        function Component(value) { Object.assign(this, value); this.events = {}; this.children = []; this.xtype ||= 'panel'; }
+        if (Parent) Component.prototype = Object.create(Parent.prototype);
+        for (const [key, value] of Object.entries(config)) {
+            if (typeof value !== 'function') { Component.prototype[key] = value; continue; }
+            const previous = Parent?.prototype[key];
+            Component.prototype[key] = function (...args) { stack.push(previous); try { return value.apply(this, args); } finally { stack.pop(); } };
+        }
+        Component.prototype.callParent = function (args) { return stack.at(-1)?.apply(this, args); };
+        classes.set(name, Component);
+    }
+    function node(data, parent) {
+        return { data: { ...data }, parentNode: parent, childNodes: [], get(key) { return this.data[key]; }, getId() { return this.data.id; },
+            set(value) { Object.assign(this.data, value); }, findChild(key, value) { return this.childNodes.find((n) => n.get(key) === value); },
+            appendChild(value) { const n = node(value, this); this.childNodes.push(n); for (const c of value.children || []) n.appendChild(c); return n; },
+            remove() { this.parentNode.childNodes = this.parentNode.childNodes.filter((n) => n !== this); }, removeAll() { this.childNodes = []; } };
+    }
+    function store(config = {}) {
+        const s = { rows: [], loadData(data) { this.rows = data.map((v) => ({ data: v, get: (k) => v[k], getId: () => v.id })); },
+            getById(id) { return this.rows.find((r) => r.getId() === id); }, clearFilter() {}, filterBy(fn) { this.rows = this.rows.filter(fn); } };
+        s.loadData(config.data || []);
+        if (config.root) {
+            s.root = node(config.root); for (const c of config.root.children || []) s.root.appendChild(c);
+            s.getNodeById = function (id) { const find = (n) => n.getId() === id ? n : n.childNodes.map(find).find(Boolean); return find(this.root); };
+        }
+        return s;
+    }
+    define('Ext.Component', {
+        initComponent() {
+            this.children = [];
+            for (const key of ['items', 'tbar', 'bbar', 'buttons']) {
+                const values = Array.isArray(this[key]) ? this[key] : this[key]?.items || [];
+                for (const value of values) if (value && typeof value === 'object') this.add(value);
+            }
+            if (this.store) this.dataStore = store(this.store);
+            this.selection = { selected: [], select(record) { this.selected = record ? [record] : []; }, getSelection() { return this.selected; }, suspendEvents() {}, resumeEvents() {} };
+        },
+        on(name, fn) { (this.events[name] ||= []).push(fn); }, fire(name, ...args) { let result; for (const fn of this.events[name] || []) result = fn.apply(this, args.length ? args : [this]); return result; },
+        add(value) { const c = value.events ? value : create(value.xtype === 'grid' ? 'Ext.grid.Panel' : 'Ext.Component', value); c.ownerCt = this; this.children.push(c); if (this.rendered) c.render(); return c; },
+        removeAll() { for (const c of this.children) c.destroy(); this.children = []; },
+        down(selector) { for (const c of this.children) { if (selector === '#' + c.itemId || selector === c.xtype) return c; const found = c.down(selector); if (found) return found; } return null; },
+        up(selector) { let p = this.ownerCt; while (p) { if (p.xtype === selector) return p; p = p.ownerCt; } return null; },
+        getStore() { return this.dataStore; }, getRootNode() { return this.dataStore.root; }, getSelectionModel() { return this.selection; },
+        setVisible(value) { this.hidden = !value; }, setText(value) { this.text = value; }, update(value) { this.html = value; }, setDisabled(value) { this.disabled = value; },
+        getValue() { return this.xtype === 'checkbox' ? !!this.checked : this.value; }, setValue(value) { this.value = value; },
+        getForm() { return { isValid: () => true, getValues: () => Object.fromEntries(this.children.filter((c) => c.name).map((c) => [c.name, c.getValue()])) }; },
+        render() { if (this.rendered || this.destroyed) return; this.rendered = true; for (const c of this.children) c.render(); this.fire('afterrender'); },
+        destroy() { if (this.destroyed || this.destroying) return; this.destroying = true; this.fire('beforedestroy'); for (const c of this.children) c.destroy(); this.destroyed = true; this.fire('destroy'); },
+        show() { this.render(); windows.push(this); }, close() { if (this.fire('beforeclose') !== false) this.destroy(); },
+    });
+    for (const name of ['Ext.grid.Panel', 'Ext.tree.Panel', 'Ext.window.Window']) define(name, { extend: 'Ext.Component' });
+    define('PVE.form.ViewSelector', { extend: 'Ext.Component', initComponent() {
+        const rows = [{ key: 'server' }]; this.dataStore = { rows, add: (r) => rows.push(r), findRecord: (k, v) => rows.find((r) => r[k] === v) };
+        return 'native-selector';
+    } });
+    define('PVE.StdWorkspace', { extend: 'Ext.Component', xtype: 'pveStdWorkspace', onLogin(data) { context.window.Proxmox.UserName = data?.username || null; return 'native-login'; },
+        setContent(config) { const old = this.activePage; if (old && !old.destroyed) { old.fire('deactivate'); old.fire('hide'); old.destroy(); } this.activePage = create('Ext.Component', config); this.activePage.ownerCt = this; this.activePage.render(); } });
+    define('PVE.tree.ResourceTree', { extend: 'Ext.Component', initComponent() {
+        this.callParent(arguments);
+        this.setViewFilter = function (view) { this.viewFilter = view; this.setVisible(view.id !== 'pve-komodo-containers'); this.ownerCt.down('#pve-komodo-container-tree').setVisible(view.id === 'pve-komodo-containers'); return 'native-filter'; };
+        return 'native-tree';
+    } });
+    function create(name, config = {}) { const c = new (classes.get(name) || classes.get('Ext.Component'))(config); c.initComponent(); for (const [name, fn] of Object.entries(config.listeners || {})) c.on(name, fn); return c; }
+    const context = vm.createContext({ URLSearchParams, window: { Ext: { define, create, ClassManager: { get: (name) => classes.get(name) }, Ajax: {
+        request(options) { const request = { options, aborted: false }; requests.push(request); return request; }, abort(request) { request.aborted = true; },
+    } }, Proxmox: { UserName: 'root@pam', Utils: { authOK: () => !!context.window.Proxmox.UserName } },
+    setTimeout(fn) { const timer = { fn }; timers.add(timer); return timer; }, clearTimeout(timer) { timers.delete(timer); }, document: { hidden: false }, console: { warn: (...args) => warnings.push(args) } } });
+    vm.runInContext(source, context);
+    const workspace = create('PVE.StdWorkspace'); workspace.xtype = 'pveStdWorkspace';
+    const owner = create('Ext.Component', { ownerCt: workspace });
+    owner.add({ itemId: 'pve-komodo-container-tree', hidden: true }); owner.add({ itemId: 'pve-extra-sites-panel', hidden: true });
+    const native = create('PVE.tree.ResourceTree', { ownerCt: owner }); owner.children.push(native);
+    function enter() { native.setViewFilter({ id: 'pve-safeline-waf' }); return native._pveSafeLine; }
+    function reply(path, data, status = 200, selectedRequest) {
+        const r = selectedRequest || requests.find((r) => !r.replied && r.options.url === base + path);
+        assert.ok(r, path); r.replied = true; r.options.callback(null, status >= 200 && status < 300, { status, responseText: JSON.stringify(status === 200 ? { user: 'root@pam', ...data } : data) }); return r;
+    }
+    return { context, create, workspace, native, requests, enter, reply, timers, windows, warnings, owner };
+}
+
+const connection = { configured: true, revision: 1, source: 'saved', csrf_token: 'csrf-value', connection: { url: 'https://10.101.100.101:9443', token_configured: true, tls_verify: true, tls_server_name: 'waf.example', ca_pem: '' } };
+function inventory(name = '<img src=x onerror=alert(1)>', code = 'running') {
+    return { resources: { applications: [{ id: '12', kind: 'applications', name, domains: ['app.example'], ports: ['443'], status: { code, label: '防護模式' } }], deny: [], allow: [], certificates: [], 'ip-groups': [] },
+        policies: [], errors: {}, totals: {}, truncated: {}, origin_id: 'waf-origin', connection_revision: 1, updated_at: '2026-10-18T12:00:00Z' };
+}
+
+test('SafeLine view loads through its own API and restores the native and container views', () => {
+    const b = browser(), state = b.enter();
+    assert.equal(b.native.hidden, true); assert.equal(state.tree.hidden, false);
+    b.reply('/connection', connection); b.reply('/inventory', inventory());
+    assert.equal(state.tree.getRootNode().childNodes.length, 5);
+    assert.equal(state.tree.getStore().getNodeById('applications:12').get('text'), '<img src=x onerror=alert(1)>');
+    const renderer = state.tree.columns[0].renderer;
+    assert.ok(renderer('<img>', {}, state.tree.getStore().getNodeById('applications:12')).includes('&lt;img&gt;'));
+    assert.ok(b.requests.every((r) => r.options.url.startsWith(base + '/')));
+    b.native.setViewFilter({ id: 'pve-komodo-containers' });
+    assert.equal(state.active, false); assert.equal(state.tree.hidden, true);
+    assert.equal(b.owner.down('#pve-komodo-container-tree').hidden, false); assert.equal(b.timers.size, 0);
+    b.native.setViewFilter({ id: 'server' }); assert.equal(b.native.hidden, false);
+    assert.equal(b.warnings.length, 0);
+});
+
+test('refresh updates nodes in place and retains resource identity and expansion state', () => {
+    const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', inventory('before'));
+    const app = state.tree.getStore().getNodeById('applications:12'), folder = state.tree.getStore().getNodeById('type:applications');
+    folder.set({ expanded: false }); state.selection = { kind: 'applications', id: '12' }; state.tab = 'summary';
+    state.tree.tbar[0].handler(); b.reply('/inventory', inventory('renamed', 'paused'));
+    assert.equal(state.tree.getStore().getNodeById('applications:12'), app);
+    assert.equal(app.get('text'), 'renamed'); assert.equal(app.get('iconCls'), 'fa fa-globe paused');
+    assert.equal(folder.get('expanded'), false); assert.equal(state.selection.id, '12');
+});
+
+test('logout cancels pending requests, wipes resources and ignores delayed callbacks', () => {
+    const b = browser(), state = b.enter(); b.reply('/connection', connection);
+    const pending = b.requests.find((r) => r.options.url === base + '/inventory');
+    b.workspace.onLogin(null);
+    assert.equal(state.active, false); assert.equal(state.connection, null); assert.equal(state.inventory, null);
+    assert.equal(pending.aborted, true); assert.equal(b.timers.size, 0);
+    b.reply('/inventory', inventory('must-never-appear'), 200, pending);
+    assert.equal(state.inventory, null); assert.equal(state.tree.getRootNode().childNodes.length, 0);
+});
+
+test('a changed user without a login hook cannot retain or update prior private content', () => {
+    const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', inventory());
+    state.tree.tbar[0].handler();
+    b.context.window.Proxmox.UserName = 'other@pam';
+    b.reply('/inventory', inventory('private-late-response'));
+    assert.equal(state.active, false); assert.equal(state.inventory, null); assert.equal(state.page, null);
+    assert.equal(b.timers.size, 0);
+});
+
+test('saved credentials are never filled into the editor; new values submit to the backend with CSRF', () => {
+    const b = browser(), state = b.enter(); b.reply('/connection', { ...connection, configured: false });
+    const settings = state.page.down('#safeline-body').children[0]; settings.tbar[0].handler();
+    const editor = state.editor, form = editor.down('form');
+    assert.equal(form.children.find((c) => c.name === 'token').value, '');
+    form.children.find((c) => c.name === 'token').value = 'new-private-token';
+    editor.down('#safeline-test').handler();
+    const submitted = b.requests.at(-1).options;
+    assert.equal(submitted.url, base + '/connection/test'); assert.equal(submitted.jsonData.token, 'new-private-token');
+    assert.equal(submitted.headers['X-PVE-Plugins-CSRF'], 'csrf-value');
+    b.reply('/connection/test', { connected: true, version: '9.4.2' });
+    assert.ok(editor.down('#safeline-edit-status').html.includes('尚未保存'));
+    assert.equal(state.connection.revision, 1);
+});
+
+test('duplicate script registration does not wrap the selector again', () => {
+    const b = browser(); vm.runInContext(source, b.context);
+    const selector = b.create('PVE.form.ViewSelector');
+    assert.equal(selector.getStore().rows.filter((row) => row.key === 'pve-safeline-waf').length, 1);
+});

@@ -7,6 +7,7 @@ const plugins = [
     ['komodo', '../plugins/komodo/static/extension.js', '__pveKomodoDatacenterExtensionLoaded', '_pveKomodoLoggedOut'],
     ['temperatures', '../plugins/temperatures/static/temperatures.js', '__pveNodeTemperaturesLoaded', '_pveTemperaturesLoggedOut'],
     ['sites', '../plugins/sites/static/sites.js', '__pveExtraSitesLoaded', '_pveExtraSitesLoggedOut'],
+    ['safeline', '../plugins/safeline/static/safeline.js', '__pveSafeLineLoaded', '_pveSafeLineLoggedOut'],
 ].map(([id, path, marker, logoutFlag]) => ({ id, source: readFileSync(new URL(path, import.meta.url), 'utf8'), marker, logoutFlag }));
 
 function browser() {
@@ -54,7 +55,7 @@ function browser() {
     return { classes, context, warnings };
 }
 
-for (let mask = 0; mask < 8; mask++) {
+for (let mask = 0; mask < (1 << plugins.length); mask++) {
     const selected = plugins.filter((_, index) => mask & (1 << index));
     test(`real plugin scripts compose selector and login hooks: ${selected.map((item) => item.id).join(',') || 'none'}`, () => {
         const ui = browser();
@@ -68,6 +69,7 @@ for (let mask = 0; mask < 8; mask++) {
         const expected = ['server', 'folder', 'pool', 'tags'];
         if (selected.some((plugin) => plugin.id === 'komodo')) expected.push('pve-komodo-containers');
         if (selected.some((plugin) => plugin.id === 'sites')) expected.push('pve-extra-sites');
+        if (selected.some((plugin) => plugin.id === 'safeline')) expected.push('pve-safeline-waf');
         assert.deepEqual(selector.getStore().rows.map((row) => row.key), expected);
         const workspace = new (ui.classes.get('PVE.StdWorkspace'))();
         assert.equal(workspace.onLogin({ username: 'root@pam' }), 'native-login');

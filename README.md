@@ -2,13 +2,14 @@
 
 以獨立 FastAPI 容器承載 Proxmox VE 9 WebUI 插件。沿用 PVE 原生 ExtJS 元件及登入會話，不修改 PVE 官方檔案、VM/CT 設定或 PVE API。
 
-目前提供三個可以各自啟停的插件。切換組合使用同一份程式碼、同一個容器映像；容器啟動時依環境變數與模板生成正式的腳本片段及插件設定。
+目前提供四個可以各自啟停的插件。切換組合使用同一份程式碼、同一個容器映像；容器啟動時依環境變數與模板生成正式的腳本片段及插件設定。
 
 | 插件 ID | 功能 | 外部依賴 |
 | --- | --- | --- |
 | `komodo` | Docker／伺服器／應用棧／容器管理、VM/CT 關聯、日誌、終端、告警與操作紀錄 | Komodo Core、Periphery 與服務帳號 API 憑據 |
 | `temperatures` | 節點概要中的 CPU、主機板、磁碟溫度與感測器明細 | 節點 node_exporter；可選自訂採集器 |
 | `sites` | 共用附加站點清單、iframe、新增、編輯與移除 | SQLite 持久化；無需 Komodo |
+| `safeline` | 獨立 SafeLine WAF 視圖、五類資源樹、統計、事件／日誌及頁面連線設定 | SafeLine HTTPS API；設定保存在插件資料卷 |
 
 詳細功能：[Komodo 插件](docs/KOMODO.md)、[節點溫度](TEMPERATURES.md)。Komodo 的「統計」「計畫任務」仍為占位頁；部署與程式碼倉庫管理仍有未開放功能。
 
@@ -17,8 +18,11 @@
 在 `.env` 設定：
 
 ```dotenv
-# 全部啟用（未設定此變數時的預設值）
+# 既有預設組合（未設定此變數時保留此組合）
 PVE_PLUGINS=komodo,temperatures,sites
+
+# 加入獨立 SafeLine WAF 視圖
+PVE_PLUGINS=komodo,temperatures,sites,safeline
 ```
 
 其他組合：
@@ -34,7 +38,7 @@ PVE_PLUGINS=komodo
 PVE_PLUGINS=
 ```
 
-停用插件時，不匯入其 Python 實作、不註冊其業務 API、不提供或注入其腳本，也不初始化其連線池與資料庫。未知 ID、重複 ID、缺少依賴或循環依賴會阻止啟動，避免靜默套用錯誤組合。三個內建插件互不依賴，支援全部八種組合。
+停用插件時，不匯入其 Python 實作、不註冊其業務 API、不提供或注入其腳本，也不初始化其連線池與資料庫。未知 ID、重複 ID、缺少依賴或循環依賴會阻止啟動，避免靜默套用錯誤組合。四個內建插件互不依賴，支援全部 16 種組合。
 
 共用 PVE 元件的可選載入順序由描述檔的 `after` 管理。例如站點與 Komodo 同時啟用時，站點會在 Komodo 之後載入；調換環境變數中的排列也不會破壞資源樹。
 
@@ -84,7 +88,7 @@ curl --fail http://127.0.0.1:18080/pve-plugins/health
 | 環境變數 | 用途 |
 | --- | --- |
 | `PVE_UPSTREAM` | 必填，固定 HTTPS origin，例如 `https://pve.example.internal:8006` |
-| `PVE_PLUGINS` | 逗號分隔插件 ID；未設定預設全部，明確空值停用全部 |
+| `PVE_PLUGINS` | 逗號分隔插件 ID；未設定維持 `komodo,temperatures,sites`，明確空值停用全部 |
 | `PVE_PLUGINS_INJECTION_ENABLED` | 桌面注入開關，預設 `true` |
 | `PVE_ADMIN_USERS` | 完整 PVE 使用者 ID 白名單，預設 `root@pam`；仍須具有 `/` 的 `Sys.Audit` |
 | `PVE_TLS_VERIFY`、`PVE_CA_FILE` | 原始 PVE 的憑證驗證；自簽 CA 需唯讀掛載公開 CA 憑證 |
@@ -94,6 +98,19 @@ curl --fail http://127.0.0.1:18080/pve-plugins/health
 | `PVE_KOMODO_TLS_VERIFY` | Core TLS 驗證，預設 `true`，與 PVE 分開 |
 | `PVE_TEMPERATURES_SOURCES_FILE` | 溫度來源覆蓋；預設從 PVE 自動取得節點 IP 並讀取 node_exporter 9100 |
 | `PVE_KOMODO_ACTION_STATE_FILE`、`PVE_KOMODO_GUEST_LINKS_FILE`、`PVE_SITES_STATE_FILE` | 各插件的 SQLite 路徑；Compose 固定在 `/app/data/` 下 |
+| `SAFELINE_STATE_FILE` | SafeLine 連線設定資料庫；Compose 為 `/app/data/safeline/connection.sqlite3` |
+| `SAFELINE_URL`、`SAFELINE_API_TOKEN` | 可選初始設定；在頁面保存或清除連線後不再覆蓋頁面設定 |
+| `SAFELINE_CA_FILE`、`SAFELINE_TLS_SERVER_NAME` | 初始連線的可選 CA 憑證及憑證主機名；也可直接在頁面填寫 |
+
+### SafeLine WAF
+
+啟用 `safeline` 後，在左上角視圖選擇器選「SafeLine WAF」，於根節點右側「連線資訊 → 編輯連線」填寫管理地址及 API Token，測試後保存即可，不必修改環境變數或重新啟動容器。使用內網 IP 而憑證簽給網域時，可填寫「憑證主機名」並保留 TLS 驗證。
+
+資源樹按防護應用、黑名單、白名單、TLS 憑證及 IP 組分類，二級為具體資源；根節點提供總覽、安全事件、防護規則和連線資訊。資源沿用 [PVE 原生圖標形態](docs/PVE-NATIVE-ICONS.md)。此版本對 SafeLine 僅發送讀取請求；保存連線只修改插件自己的資料。
+
+Token 保存在後端資料卷的 `0600` SQLite 檔案，目錄預設 `0700`；前端只讀取「已設定」標記，不回填原文，也不保存到瀏覽器儲存。資料庫包含憑據，備份及檔案存取權限須按憑據處理。憑證頁不讀取私鑰接口；日誌遮罩認證／Cookie 標頭，本文不傳至前端。
+
+事件數字 ID 與日誌事件 ID 的關係未獲核對，事件詳情按來源、Host、端口及時間範圍查詢相關日誌。應用日誌明確標示 Host／端口篩選；IP 組不把空引用字串當成未被使用。詳見 [SafeLine 設計與驗證範圍](docs/SAFELINE-DESIGN.md)。
 
 自簽 PVE CA 的 Compose 覆蓋範例：
 
@@ -159,9 +176,10 @@ node --test tests/*.mjs
 node --check plugins/komodo/static/extension.js
 node --check plugins/temperatures/static/temperatures.js
 node --check plugins/sites/static/sites.js
+node --check plugins/safeline/static/safeline.js
 ```
 
-[CI](.github/workflows/ci.yml) 執行完整 Python／Node 回歸、八種組合檢查，以及非 root、唯讀容器的八種組合 smoke test。容器驗證也核對生成檔和腳本內容。它不連接真實 PVE，不代替實際瀏覽器驗收。
+[CI](.github/workflows/ci.yml) 執行完整 Python／Node 回歸、16 種組合檢查，以及非 root、唯讀容器的 16 種組合 smoke test。容器驗證也核對生成檔和腳本內容。它不連接真實 PVE，不代替實際瀏覽器驗收。
 
 新增插件的契約與範例見 [插件開發](docs/PLUGINS.md)。
 

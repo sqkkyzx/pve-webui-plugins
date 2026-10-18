@@ -17,12 +17,13 @@ from test_app import DESKTOP
 
 
 ROOT = Path(__file__).resolve().parent.parent
-IDS = ("komodo", "temperatures", "sites")
-COMBINATIONS = [values for count in range(4) for values in combinations(IDS, count)]
+IDS = ("komodo", "temperatures", "sites", "safeline")
+COMBINATIONS = [values for count in range(len(IDS) + 1) for values in combinations(IDS, count)]
 PATHS = {
     "komodo": ("/pve-plugins/api/komodo/connection", "/pve-plugins/assets/komodo/extension.js"),
     "temperatures": ("/pve-plugins/api/temperatures/nodes/pve-a", "/pve-plugins/assets/temperatures/temperatures.js"),
     "sites": ("/pve-plugins/api/sites", "/pve-plugins/assets/sites/sites.js"),
+    "safeline": ("/pve-plugins/api/safeline/connection", "/pve-plugins/assets/safeline/safeline.js"),
 }
 
 
@@ -65,7 +66,7 @@ import sys
 from app.main import Settings, create_app
 ids = tuple(sys.argv[1].split(',')) if sys.argv[1] else ()
 app = create_app(Settings('https://pve.example:8006', tls_verify=False, enabled_plugins=ids))
-for name in ('komodo', 'temperatures', 'sites'):
+for name in ('komodo', 'temperatures', 'sites', 'safeline'):
     assert ('plugins.' + name + '.plugin' in sys.modules) == (name in ids)
     if name not in ids:
         assert not any(key.startswith('plugins.' + name + '.') for key in sys.modules)
@@ -81,6 +82,9 @@ def test_environment_can_select_no_plugins_and_ignores_disabled_plugin_configura
     monkeypatch.setenv("PVE_KOMODO_URL", "invalid-origin")
     monkeypatch.setenv("PVE_KOMODO_TLS_VERIFY", "invalid-but-unused")
     monkeypatch.setenv("PVE_TEMPERATURES_SOURCES_FILE", str(tmp_path / "missing.json"))
+    monkeypatch.setenv("SAFELINE_URL", "invalid-origin")
+    monkeypatch.setenv("SAFELINE_API_TOKEN", "invalid\nheader")
+    monkeypatch.setenv("SAFELINE_STATE_FILE", str(tmp_path / "must-not-be-opened" / "connection.sqlite3"))
     config = Settings.from_env()
     assert config.enabled_plugins == ()
     with TestClient(create_app(config)) as client:
