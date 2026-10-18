@@ -60,6 +60,11 @@ def waf_handler(state):
         elif path == "/api/stat/advance/access": value = {"access": 0, "ip": 0, "session": 0}
         elif path == "/api/stat/advance/attack": value = {"attack_ip": 0, "intercept": {"block": 0}}
         elif path.startswith("/api/stat/advance/trend/"): value = [{"time": 1792185349, "count": 0}]
+        elif path == "/api/stat/advance/error_status_code": value = {"error_4xx": 0, "error_5xx": 0}
+        elif path == "/api/stat/advance/location": value = [{"country": "CN", "province": "福建省", "count": 5}]
+        elif path == "/api/open/security_posture/statistics": value = {"attack_allow": 0, "attack_deny": 0, "anti_tamper": []}
+        elif path == "/api/open/security_posture/trends": value = {"item": [{"1792185349": "0"}], "pass": [{"1792185349": "0"}], "top": []}
+        elif path == "/api/open/security_posture/realtime": value = {"event": []}
         else: pytest.fail("Unexpected SafeLine endpoint: " + path)
         return httpx.Response(200, json={"data": value, "err": "", "msg": "ok"}, headers={"set-cookie": "upstream-private=do-not-replay"})
     return handler
@@ -173,7 +178,7 @@ def test_overview_uses_verified_seconds_and_console_preset(integrated):
     configure(client)
     assert client.get(BASE + "/overview?hours=24", headers={"cookie": COOKIE}).status_code == 200
     for request in state["waf"]:
-        if request.url.path != "/api/stat/qps":
+        if request.url.path not in {"/api/stat/qps", "/api/open/system/edition", "/api/open/security_posture/realtime"}:
             assert request.url.params["time_preset"] == "last1Day"
             assert int(request.url.params["end_time"]) - int(request.url.params["begin_time"]) == 86400
     state["waf"].clear()

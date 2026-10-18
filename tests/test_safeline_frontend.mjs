@@ -68,6 +68,7 @@ function browser() {
         setVisible(value) { this.hidden = !value; }, setText(value) { this.text = value; }, update(value) { this.html = value; }, setDisabled(value) { this.disabled = value; },
         getValue() { return this.xtype === 'checkbox' ? !!this.checked : this.value; }, setValue(value) { this.value = value; },
         getPlugins() { return []; },
+        getEl() { return { on: (name, fn) => { this.elementEvents ||= {}; this.elementEvents[name] = fn; }, down: () => ({ focus() {} }) }; },
         getForm() { return { isValid: () => true, getValues: () => Object.fromEntries(this.children.filter((c) => c.name).map((c) => [c.name, c.getValue()])) }; },
         render() { if (this.rendered || this.destroyed) return; this.rendered = true; for (const c of this.children) c.render(); this.fire('afterrender'); },
         destroy() { if (this.destroyed || this.destroying) return; this.destroying = true; this.fire('beforedestroy'); for (const c of this.children) c.destroy(); this.destroyed = true; this.fire('destroy'); },
@@ -286,4 +287,94 @@ test('certificate editor starts blank and only sends a new certificate when expl
     dialog.down('#safeline-input-crt').value = 'new-public-pem'; dialog.down('#safeline-resource-save').handler();
     assert.deepEqual(JSON.parse(JSON.stringify(b.requests.at(-1).options.jsonData.changes)), { crt: 'new-public-pem', key: '' });
     b.workspace.onLogin(null); assert.equal(dialog.destroyed, true); assert.equal(state.editor, null);
+});
+
+function dashboardData(edition = 2, filters = { preset: 'last1Day', site_id: null }) {
+    const presets = ['last1Day', 'today', 'last7Day', 'last30Day'];
+    return { sections: { access: { access: 1000, pv: 250, session: 100, ip: 40 }, attack: { attack_ip: 3, intercept: { block: 1, blacklist: 2, challenge: 3, rate_limit: 4, auth_defense: 5, offline: 6 } },
+        error_upstream: { error_4xx: 10, error_5xx: 3 }, error_waf: { error_4xx: 5, error_5xx: 7 },
+        qps: [{ time: '12:00:00', count: 3 }], access_trend: [{ time: 1792317600, count: 1000 }], intercept_trend: [{ time: 1792317600, count: 21 }],
+        geo_world_access: [{ country: 'CN', province: '', count: 111 }], geo_world_intercept: [{ country: 'US', province: '', count: 22 }],
+        geo_china_access: [{ country: 'CN', province: '福建省', count: 333 }], geo_china_intercept: [{ country: 'CN', province: '廣東省', count: 44 }],
+        posture: { attack_deny: 1, attack_allow: 2, black_hit: 3, white_hit: 4, acl_hit: 5, waiting_hit: 6, challenge_deny: 7, challenge_allow: 8, auth_deny: 9, auth_allow: 10, anti_tamper: [] },
+        posture_trend: { denied: [{ time: 1792317600, count: 1 }], allowed: [{ time: 1792317600, count: 2 }], sources: [{ name: '10.0.0.1', count: 3 }] },
+        realtime: [{ type: 1, site_name: 'app.example', site_id: 12, time: 1792317600 }] },
+        errors: {}, capabilities: { edition, traffic: { applications: edition !== 0, presets: edition ? presets : ['last1Day'] },
+            security: { applications: edition === 2, presets: edition ? presets : ['last1Day', 'last7Day'] }, presets: edition ? presets : ['last1Day', 'last7Day'] },
+        filters, begin_time: 1792240000, end_time: 1792326400, updated_at: '2026-10-18T12:00:00Z', connection_revision: 1 };
+}
+function replyDashboard(b, data, status = 200, request) {
+    request ||= b.requests.findLast((r) => !r.replied && r.options.url.startsWith(base + '/overview?'));
+    return b.reply(request.options.url.slice(base.length), data, status, request);
+}
+function startDashboard(b, state, data = dashboardData()) { b.reply('/connection', connection); b.reply('/inventory', inventory()); replyDashboard(b, data); return state.page.down('#safeline-dashboard'); }
+
+test('combined overview displays traffic, error rates and security metrics from separate API sections', () => {
+    const b = browser(), state = b.enter(), panel = startDashboard(b, state);
+    const html = panel.down('#safeline-overview-body').html;
+    for (const label of ['流量分析', '安全態勢', '請求次數', '4xx 錯誤', '4xx 攔截', '5xx 錯誤', '地理位置', '攻擊防護趨勢', '攻擊來源 IP', '實時事件']) assert.ok(html.includes(label), label);
+    assert.ok(html.includes('1.00%') && html.includes('0.50%'), 'rates use the request count as denominator');
+    assert.ok(html.includes('1.0k')); assert.equal(panel.down('#safeline-overview-application').getValue(), 'all');
+    assert.equal(panel.down('#safeline-overview-application').disabled, false);
+    assert.equal(b.requests.filter((r) => r.options.url.startsWith(base + '/overview?')).length, 1, 'inventory completion never cancels and duplicates the initial dashboard query');
+});
+
+test('four geography combinations toggle locally and preserve scope without fetching a globe', () => {
+    const b = browser(), state = b.enter(), panel = startDashboard(b, state), body = panel.down('#safeline-overview-body');
+    const count = b.requests.length;
+    const click = (group, value) => body.elementEvents.click({ getTarget: () => ({ getAttribute: (key) => key === 'data-safeline-geo-' + group ? value : null }) });
+    assert.ok(body.html.includes('世界 · 訪問') && body.html.includes('111'));
+    click('mode', 'intercept'); assert.ok(body.html.includes('世界 · 僅攔截') && body.html.includes('22'));
+    click('region', 'china'); assert.ok(body.html.includes('中國 · 僅攔截') && body.html.includes('廣東省'));
+    click('mode', 'access'); assert.ok(body.html.includes('中國 · 訪問') && body.html.includes('福建省'));
+    assert.equal(b.requests.length, count); assert.ok(!body.html.includes('<canvas'));
+    assert.equal(state.overview.filters.preset, 'last1Day');
+});
+
+test('application and time selectors share one query and ignore late responses from previous scopes', () => {
+    const b = browser(), state = b.enter(), panel = startDashboard(b, state), app = panel.down('#safeline-overview-application'), time = panel.down('#safeline-overview-time');
+    app.value = '12'; app.fire('select', app);
+    const appRequest = b.requests.at(-1), params = new URL('http://test.local' + appRequest.options.url).searchParams;
+    assert.equal(params.get('site_id'), '12'); assert.equal(params.get('preset'), 'last1Day');
+    assert.equal(state.overview, null); assert.ok(!panel.down('#safeline-overview-body').html.includes('1.0k'));
+    time.value = 'last7Day'; time.fire('select', time);
+    const current = b.requests.at(-1); assert.equal(appRequest.aborted, true);
+    replyDashboard(b, dashboardData(2, { preset: 'last1Day', site_id: 12 }), 200, appRequest);
+    assert.equal(state.overview, null);
+    replyDashboard(b, dashboardData(2, { preset: 'last7Day', site_id: 12 }), 200, current);
+    assert.equal(state.overview.filters.preset, 'last7Day'); assert.equal(state.overview.filters.site_id, 12);
+    assert.equal(state.page.down('#safeline-dashboard'), panel); assert.equal(panel.down('#safeline-overview-time'), time, 'form controls are not replaced when data refreshes');
+});
+
+test('personal edition disables ignored application filters while retaining valid posture time ranges', () => {
+    const b = browser(), state = b.enter(), panel = startDashboard(b, state, dashboardData(0));
+    assert.equal(panel.down('#safeline-overview-application').disabled, true);
+    assert.equal(panel.down('#safeline-overview-time').disabled, false);
+    assert.equal(panel.down('#safeline-overview-time').getStore().rows.map((r) => r.data.id).join(','), 'last1Day,last7Day');
+    assert.ok(panel.down('#safeline-overview-notice').html.includes('僅提供全站資料'));
+    const time = panel.down('#safeline-overview-time'); time.value = 'last7Day'; time.fire('select', time);
+    const data = dashboardData(0, { preset: 'last7Day', site_id: null }); delete data.sections.access; data.errors.access = 'safeline_statistics_range_unavailable';
+    replyDashboard(b, data);
+    assert.ok(panel.down('#safeline-overview-body').html.includes('目前版本不支援此區塊的統計時段'));
+    assert.ok(panel.down('#safeline-overview-body').html.includes('安全態勢'));
+});
+
+test('dashboard encodes outside labels and never fabricates rates for missing counters', () => {
+    const b = browser(), state = b.enter(), data = dashboardData();
+    const unsafe = '<img src=x onerror=alert(1)>';
+    data.sections.realtime[0].site_name = unsafe; data.sections.posture_trend.sources[0].name = unsafe; data.sections.geo_world_access[0].country = unsafe;
+    data.sections.access.access = null; data.sections.error_upstream.error_4xx = null;
+    const html = startDashboard(b, state, data).down('#safeline-overview-body').html;
+    assert.ok(!html.includes(unsafe)); assert.ok(html.includes('&lt;img')); assert.ok(html.includes('不可用'));
+    assert.ok(!html.includes('NaN') && !html.includes('Infinity'));
+});
+
+test('polling cannot overlap pending overview work and logout clears dashboard scopes', () => {
+    const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', inventory());
+    const count = b.requests.filter((r) => r.options.url.startsWith(base + '/overview?')).length;
+    for (const timer of [...b.timers]) timer.fn();
+    assert.equal(b.requests.filter((r) => r.options.url.startsWith(base + '/overview?')).length, count);
+    replyDashboard(b, dashboardData()); state.geoRegion = 'china'; state.overviewFilters.siteId = '12';
+    b.workspace.onLogin(null);
+    assert.equal(state.overview, null); assert.equal(state.dashboardCaps, null); assert.equal(state.overviewFilters.siteId, null); assert.equal(state.geoRegion, 'world');
 });

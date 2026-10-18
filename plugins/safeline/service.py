@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import hashlib
 import math
 import re
-import time
 
 from plugins.safeline.client import SafeLineClient
 from plugins.safeline.connection import SafeLineError
@@ -273,40 +272,9 @@ class SafeLineService:
         return safe({"items": [event(row) if events else record(row) for row in values], "total": total,
                      "connection_revision": revision, "updated_at": now()}, client.connection.token)
 
-    async def overview(self, hours):
-        client, revision = self.client()
-        end = int(time.time())
-        if hours != 24:
+    async def overview(self, hours=24, *, preset="last1Day", site_id=None, utc_offset=0):
+        from plugins.safeline.dashboard import PRESETS, overview
+
+        if hours != 24 or preset not in PRESETS:
             raise SafeLineError("invalid_safeline_query", 422)
-        # The target CE instance silently clamps other ranges to 24 hours.
-        # Use the verified console preset rather than presenting ignored ranges.
-        params = {"begin_time": end-hours*3600, "end_time": end, "time_preset": "last1Day"}
-        names = ("access", "attack", "access_trend", "intercept_trend", "qps")
-        paths = ("advance/access", "advance/attack", "advance/trend/access", "advance/trend/intercept", "qps")
-        results = await asyncio.gather(*(client.get("/api/stat/" + path, None if name == "qps" else params)
-                                         for name, path in zip(names, paths)), return_exceptions=True)
-        sections, errors = {}, {}
-        for name, value in zip(names, results):
-            try:
-                if isinstance(value, BaseException):
-                    raise value
-                if name == "access":
-                    if not isinstance(value, dict):
-                        raise ValueError
-                    sections[name] = {k: number(value.get(k)) for k in ("access", "session", "ip", "pv")}
-                elif name == "attack":
-                    if not isinstance(value, dict) or not isinstance(value.get("intercept"), dict):
-                        raise ValueError
-                    sections[name] = {"attack_ip": number(value.get("attack_ip")), "intercept": {
-                        k: number(value["intercept"].get(k)) for k in ("block", "blacklist", "challenge", "rate_limit", "auth_defense", "offline")}}
-                elif name == "qps":
-                    sections[name] = [{"time": text(row.get("time")), "count": number(row.get("0.0.0.0:0"))}
-                                      for row in rows(value, "nodes")[-120:]]
-                else:
-                    if not isinstance(value, list) or len(value) > 3000 or any(not isinstance(v, dict) for v in value):
-                        raise ValueError
-                    sections[name] = [{"time": number(row.get("time")), "count": number(row.get("count"))} for row in value]
-            except (SafeLineError, ValueError, TypeError) as error:
-                errors[name] = error.code if isinstance(error, SafeLineError) else "safeline_unexpected_response"
-        return {"sections": sections, "errors": errors, "begin_time": params["begin_time"], "end_time": end,
-                "hours": hours, "connection_revision": revision, "updated_at": now()}
+        return await overview(self, preset, site_id, utc_offset)

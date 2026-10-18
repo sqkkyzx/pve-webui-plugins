@@ -180,12 +180,17 @@ def register_routes(context, store, service):
     @application.get(base + "/overview")
     async def overview(request: Request):
         user = await authorize(request)
-        values = query(request, {"hours"})
+        values = query(request, {"hours", "preset", "site_id", "utc_offset"})
         hours = integer(values.get("hours", "24"), 1, 168)
-        if hours != 24:
+        preset = values.get("preset", "last1Day")
+        if hours != 24 or "hours" in values and "preset" in values or preset not in {"last1Day", "today", "last7Day", "last30Day"}:
+            raise HTTPException(422, "invalid_safeline_query")
+        site_id = integer(values["site_id"], 1, 9_007_199_254_740_991) if "site_id" in values else None
+        offset = values.get("utc_offset", "0")
+        if not re.fullmatch(r"-?[0-9]{1,3}", offset) or not -840 <= int(offset) <= 840:
             raise HTTPException(422, "invalid_safeline_query")
         try:
-            return {"user": user, **await service.overview(hours)}
+            return {"user": user, **await service.overview(hours, preset=preset, site_id=site_id, utc_offset=int(offset))}
         except SafeLineError as error:
             raise HTTPException(error.status, error.code) from None
 

@@ -31,6 +31,8 @@
         safeline_operation_store_full: '操作紀錄已滿，暫時無法寫入', invalid_safeline_domains: '域名格式無效', invalid_safeline_ports: '端口需為 1–65535，TLS 端口請加 _ssl',
         invalid_safeline_upstreams: '回源請填寫完整的 HTTP 或 HTTPS 地址及端口', invalid_safeline_ips: 'IP、CIDR 或 IP 範圍格式無效',
         invalid_safeline_certificate: '請檢查 PEM 憑證及私鑰格式',
+        safeline_statistics_scope_unavailable: '目前版本不支援此區塊的應用篩選',
+        safeline_statistics_range_unavailable: '目前版本不支援此區塊的統計時段',
     };
     function alive(c) { return c && !c.destroyed && !c.destroying; }
     function enc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -58,7 +60,12 @@
     function status(state, value) { const c = alive(state.tree) && state.tree.down('#safeline-tree-status'); if (c) c.setText(enc(value)); }
     function cancel(state, all) {
         state.navigation++;
-        if (all) { state.generation++; if (state.timer) window.clearTimeout(state.timer); state.timer = null; }
+        state.overviewSerial = (state.overviewSerial || 0) + 1; state.overviewPending = false;
+        if (all) {
+            state.generation++; if (state.timer) window.clearTimeout(state.timer); state.timer = null;
+            state.overview = null; state.dashboardCaps = null; state.overviewFilters = { preset: 'last1Day', siteId: null };
+            state.geoRegion = 'world'; state.geoMode = 'access';
+        }
         Array.from(state.requests).forEach(function (entry) {
             if (all || entry.page) { state.requests.delete(entry); if (entry.request) Ext.Ajax.abort(entry.request); }
         });
@@ -182,35 +189,201 @@
         show(state, grid(rows, resourceColumns(kind), function (row) { choose(state, row.kind, row.id); },
             (inventory.errors[kind] ? message(inventory.errors[kind]) + '；' : '') + (inventory.truncated[kind] ? '列表未完整載入；' : '') + '共 ' + rows.length + ' 項，雙擊開啟詳情'));
     }
-    function chart(title, points) {
-        const valid = (points || []).filter(function (p) { return typeof p.count === 'number' && Number.isFinite(p.count) && p.count >= 0; });
-        if (!valid.length) return '<div style="padding:18px"><b>' + enc(title) + '</b><p>暫無可用資料</p></div>';
-        const max = Math.max(1, ...valid.map(function (p) { return p.count; }));
-        const line = valid.map(function (p, i) { return (32 + i * 636 / Math.max(1, valid.length - 1)).toFixed(1) + ',' + (144 - p.count * 120 / max).toFixed(1); }).join(' ');
-        const label = function (p) { return typeof p.time === 'number' ? date(p.time) : p.time; };
-        return '<div style="padding:12px 16px"><b>' + enc(title) + '</b><svg role="img" aria-label="' + enc(title) + '" viewBox="0 0 700 176" style="display:block;width:100%;max-height:210px;color:inherit">' +
-            '<path d="M32 18V144H670" fill="none" stroke="currentColor" opacity="0.25"/><polyline points="' + line + '" fill="none" stroke="#3892d4" stroke-width="2"/>' +
-            '<text x="34" y="16" fill="currentColor" font-size="11">' + enc(max) + '</text><text x="32" y="168" fill="currentColor" font-size="10">' + enc(label(valid[0])) +
-            '</text><text x="670" y="168" fill="currentColor" font-size="10" text-anchor="end">' + enc(label(valid[valid.length-1])) + '</text></svg></div>';
+    function amount(value, compact) {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '不可用';
+        if (compact && value >= 1000000) return (value / 1000000).toFixed(1) + 'm';
+        if (compact && value >= 1000) return (value / 1000).toFixed(1) + 'k';
+        return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    }
+    function total(values) { return values.length && values.every(function (v) { return typeof v === 'number' && Number.isFinite(v) && v >= 0; }) ? values.reduce(function (a, b) { return a + b; }, 0) : null; }
+    function rate(value, requests) { return typeof value === 'number' && typeof requests === 'number' && requests > 0 ? (value * 100 / requests).toFixed(2) + '%' : '—'; }
+    function dashboardMetric(label, value, options) {
+        const o = options || {}, display = o.display == null ? amount(value, true) : o.display;
+        return '<div class="sl-metric"><div class="sl-label" title="' + enc(o.tip || label) + '">' + enc(label) +
+            '<i aria-hidden="true" class="fa ' + enc(o.icon || 'fa-circle-o') + (o.error ? ' sl-red' : '') + '"></i></div>' +
+            '<strong title="' + enc(o.tip || amount(value)) + '">' + enc(display) + '</strong></div>';
+    }
+    function dashboardChart(title, series, options) {
+        const o = options || {}, datasets = series || [];
+        const valid = datasets.flatMap(function (s) { return s.points || []; }).filter(function (p) { return typeof p.count === 'number' && Number.isFinite(p.count) && p.count >= 0; });
+        const peak = valid.length ? Math.max(...valid.map(function (p) { return p.count; })) : null;
+        const latest = datasets[0] && (datasets[0].points || []).slice(-1)[0];
+        const heading = '<div class="sl-card-heading"><h3>' + enc(title) + '</h3><span>' + enc(o.bars ? '即時 ' + amount(latest && latest.count) : peak == null ? '' : '峰值 ' + amount(peak, true)) + '</span></div>';
+        if (!valid.length) return heading + '<div class="sl-empty">' + enc(o.error ? message(o.error) : '暫無可用資料') + '</div>';
+        const width = 560, height = o.height || 130, left = 8, right = 552, bottom = height - 8, top = 8, maximum = Math.max(1, peak);
+        const numeric = valid.every(function (p) { return typeof p.time === 'number'; });
+        const times = numeric ? valid.map(function (p) { return p.time; }) : [];
+        const first = numeric ? Math.min(...times) : 0, last = numeric ? Math.max(...times) : 0;
+        const x = function (p, i, length) { return left + (right-left) * (numeric && last > first ? (p.time-first)/(last-first) : i / Math.max(1, length-1)); };
+        const y = function (v) { return bottom - v * (bottom-top) / maximum; };
+        let svg = '<svg role="img" aria-label="' + enc(title) + '" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none" style="height:' + height + 'px">';
+        [0, 0.5, 1].forEach(function (part) {
+            const level = top + part * (bottom-top);
+            svg += '<line x1="' + left + '" x2="' + right + '" y1="' + level + '" y2="' + level + '" stroke="currentColor" opacity="0.08" vector-effect="non-scaling-stroke"/>';
+        });
+        datasets.forEach(function (s, seriesIndex) {
+            const points = s.points || [], color = s.color || (seriesIndex ? '#ff6578' : o.color || '#14bfc3');
+            if (o.bars) {
+                const barWidth = Math.max(1, (right-left) / Math.max(1, points.length) * 0.64);
+                points.forEach(function (p, i) {
+                    if (typeof p.count !== 'number') return;
+                    svg += '<rect x="' + Math.min(right-barWidth, x(p,i,points.length)).toFixed(2) + '" y="' + y(p.count).toFixed(2) + '" width="' + barWidth.toFixed(2) + '" height="' + Math.max(0, bottom-y(p.count)).toFixed(2) + '" rx="2" fill="' + color + '"><title>' + enc(p.time + ' · ' + amount(p.count) + ' QPS') + '</title></rect>';
+                });
+            } else {
+                let segment = [];
+                function flush() { if (segment.length) svg += '<polyline points="' + segment.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>'; segment = []; }
+                points.forEach(function (p, i) { if (typeof p.count !== 'number') flush(); else segment.push(x(p,i,points.length).toFixed(2) + ',' + y(p.count).toFixed(2)); }); flush();
+            }
+        });
+        const label = function (p) { return numeric ? new Date(p.time * 1000).toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : String(p.time); };
+        const ordered = valid.slice().sort(function (a,b) { return numeric ? a.time-b.time : 0; });
+        svg += '</svg>' + (o.bars ? '' : '<div class="sl-axis-labels"><span>' + enc(label(ordered[0])) + '</span><span>' + enc(label(ordered[ordered.length-1])) + '</span></div>');
+        const legend = datasets.length > 1 ? '<div class="sl-legend">' + datasets.map(function (s,i) { return '<span><i style="background:' + (s.color || (i ? '#ff6578' : '#14bfc3')) + '"></i>' + enc(s.name) + '</span>'; }).join('') + '</div>' : '';
+        return heading + svg + legend;
+    }
+    function dashboardBars(rows, error, empty) {
+        if (error || !rows || !rows.length) return '<div class="sl-empty">' + enc(error ? message(error) : empty || '沒有符合條件的資料') + '</div>';
+        const maximum = Math.max(1, ...rows.map(function (r) { return r.count || 0; }));
+        return '<ol class="sl-ranking">' + rows.map(function (r) {
+            return '<li><div><span title="' + enc(r.name) + '">' + enc(r.name || '未知') + '</span><b title="' + enc(amount(r.count)) + '">' + enc(amount(r.count,true)) +
+                '</b></div><div class="sl-track"><span style="width:' + Math.min(100, Math.max(0,(r.count || 0) / maximum*100)).toFixed(2) + '%"></span></div></li>';
+        }).join('') + '</ol>';
+    }
+    function dashboardGeo(state, d) {
+        const key = 'geo_' + state.geoRegion + '_' + state.geoMode, values = d.sections[key], error = d.errors[key];
+        let regionNames;
+        try { regionNames = new Intl.DisplayNames(['zh-Hant'], { type: 'region' }); } catch (e) { regionNames = null; }
+        const rows = (values || []).map(function (r) {
+            let name = state.geoRegion === 'china' ? r.province || '中國（省份未知）' : r.country || '未知地區';
+            if (state.geoRegion === 'world' && regionNames && /^[A-Z]{2}$/.test(name)) { try { name = regionNames.of(name) || name; } catch (e) { /* Preserve unknown codes. */ } }
+            return { name: name, count: r.count };
+        });
+        function button(group, value, label) { return '<button type="button" data-safeline-geo-' + group + '="' + value + '" aria-pressed="' + ((group === 'region' ? state.geoRegion : state.geoMode) === value) + '">' + enc(label) + '</button>'; }
+        return '<div class="sl-card-heading"><h3>地理位置</h3><div class="sl-switches"><div role="group" aria-label="地理範圍">' + button('region','world','世界') + button('region','china','中國') +
+            '</div><div role="group" aria-label="流量類型">' + button('mode','access','訪問') + button('mode','intercept','僅攔截') + '</div></div></div>' +
+            '<div class="sl-geo-summary"><span>' + enc((state.geoRegion === 'world' ? '世界' : '中國') + ' · ' + (state.geoMode === 'access' ? '訪問' : '僅攔截')) +
+            '</span><b>' + enc(error || !values ? '不可用' : amount(rows.length ? total(rows.map(function (r) { return r.count; })) : 0, true)) + '</b></div>' +
+            '<div class="sl-geo-ranking">' + dashboardBars(rows,error,'此範圍暫無地理位置資料') + '</div><div class="sl-footnote">' + enc(error || !values ? '地理位置依 SafeLine 統計資料顯示。' : rows.length + ' 個地區；數量僅含上游已定位資料，長條按最高值比較。') + '</div>';
+    }
+    function dashboardEvents(d) {
+        const events = d.sections.realtime, labels = { 1: '攻擊防護', 2: '黑白名單', 3: '頻率限制', 4: '人機驗證', 5: '等候室', 6: '身份認證', 7: '網頁防篡改' };
+        let html = '<div class="sl-card-heading"><h3>實時事件</h3><span>最近 7 筆</span></div><div class="sl-events">';
+        if (d.errors.realtime || !events || !events.length) html += '<div class="sl-empty">' + enc(d.errors.realtime ? message(d.errors.realtime) : '暫無事件') + '</div>';
+        else {
+            let previous = '';
+            events.forEach(function (r) {
+                const timestamp = typeof r.time === 'number' ? new Date(r.time * 1000) : null;
+                const day = timestamp && !Number.isNaN(timestamp.getTime()) ? timestamp.toLocaleDateString() : '時間未知';
+                if (day !== previous) { html += '<div class="sl-event-date">' + enc(day) + '</div>'; previous = day; }
+                html += '<div class="sl-event"><span class="sl-badge" title="' + enc(r.attack_type || labels[r.type] || '事件') + '">' + enc(labels[r.type] || '事件') + '</span>' +
+                    '<span class="sl-event-site" title="' + enc(r.site_name || '應用 #' + r.site_id) + '">' + enc(r.site_name || '應用 #' + r.site_id) + '</span><time>' + enc(timestamp && !Number.isNaN(timestamp.getTime()) ? timestamp.toLocaleTimeString() : '—') + '</time></div>';
+            });
+        }
+        return html + '</div><div class="sl-footnote">最新事件，獨立於時間篩選。</div>';
+    }
+    const dashboardStyle = '<style>' +
+        '.sl-dashboard{padding:0 12px 12px;font-size:13px}.sl-dashboard h2{font-size:15px;margin:12px 0;font-weight:600}.sl-dashboard h3{font-size:13px;font-weight:600;margin:0}' +
+        '.sl-dashboard .sl-card{border:1px solid #8882;border-radius:4px;box-shadow:0 2px 8px #00000009;padding:16px;min-width:0;background:inherit}' +
+        '.sl-dashboard .sl-card-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px}.sl-dashboard .sl-card-heading>span{font-size:12px;opacity:.7;white-space:nowrap}' +
+        '.sl-dashboard .sl-traffic-stats{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}.sl-dashboard .sl-request-card{grid-column:span 6}.sl-dashboard .sl-intercept-card,.sl-dashboard .sl-error-card{grid-column:span 3}' +
+        '.sl-dashboard .sl-qps-card{grid-column:10/13;grid-row:1/3}.sl-dashboard .sl-metrics{display:grid;grid-template-columns:repeat(var(--sl-count),minmax(0,1fr));gap:0;padding:4px 0}' +
+        '.sl-dashboard .sl-metric{min-width:0;padding:0 14px;border-left:1px solid #8882}.sl-dashboard .sl-metric:first-child{padding-left:0;border-left:0}.sl-dashboard .sl-metric:last-child{padding-right:0}' +
+        '.sl-dashboard .sl-label{opacity:.65;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;font-size:12px;margin-bottom:12px}.sl-dashboard .sl-label .fa{color:#00b9bc;margin-left:8px}.sl-dashboard .sl-label .sl-red{color:#f46372}' +
+        '.sl-dashboard .sl-metric strong{font-size:22px;font-weight:600;white-space:nowrap}.sl-dashboard svg{display:block;width:100%;max-height:220px;overflow:visible}.sl-dashboard svg text{font-size:10px;fill:currentColor;opacity:.55}' +
+        '.sl-dashboard .sl-error-card .sl-label{font-size:11px;letter-spacing:-.1px}.sl-dashboard .sl-error-card .sl-label .fa{margin-left:4px;font-size:9px}.sl-dashboard .sl-traffic-main,.sl-dashboard .sl-security-main{display:grid;grid-template-columns:minmax(0,3fr) minmax(210px,1fr);gap:14px;margin-top:14px}.sl-dashboard .sl-trends{display:grid;gap:14px}.sl-dashboard .sl-geo-card{min-height:360px}' +
+        '.sl-dashboard .sl-switches{display:flex;gap:12px;flex-wrap:wrap}.sl-dashboard .sl-switches>div{display:flex;border:1px solid #8883;border-radius:4px;padding:3px;gap:3px}.sl-dashboard .sl-switches button{border:0;background:transparent;color:inherit;border-radius:3px;font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}' +
+        '.sl-dashboard .sl-switches button[aria-pressed=true]{background:#08bdc0;color:white}.sl-dashboard .sl-switches button:focus-visible{outline:2px solid #3892d4;outline-offset:2px}.sl-dashboard .sl-geo-summary{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #8882}.sl-dashboard .sl-geo-summary>b{color:#0ab9bc;font-size:20px}' +
+        '.sl-dashboard .sl-geo-ranking{max-height:282px;min-height:220px;overflow:auto;padding-right:4px}.sl-dashboard .sl-ranking{list-style:none;margin:0;padding:0}.sl-dashboard .sl-ranking li{padding:13px 0}.sl-dashboard .sl-ranking li>div:first-child{display:flex;justify-content:space-between;gap:16px}.sl-dashboard .sl-ranking li span[title]{max-width:80%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+        '.sl-dashboard .sl-track{height:4px;border-radius:3px;background:#8882;margin-top:8px;overflow:hidden}.sl-dashboard .sl-track>span{display:block;height:100%;background:#0bbfc1;border-radius:3px}.sl-dashboard .sl-footnote{opacity:.55;font-size:11px;line-height:1.6;margin-top:10px}' +
+        '.sl-dashboard .sl-security-metrics{--sl-count:7}.sl-dashboard .sl-security-chart{display:grid;grid-template-columns:minmax(0,3fr) minmax(160px,2fr);gap:16px;align-items:start}.sl-dashboard .sl-security-chart>.sl-source-ips{padding:14px;background:#88888807;border-radius:3px;min-height:230px;max-height:280px;overflow:auto}' +
+        '.sl-dashboard .sl-empty{min-height:140px;display:flex;align-items:center;justify-content:center;text-align:center;opacity:.55;padding:16px;line-height:1.7}.sl-dashboard .sl-qps-card .sl-card-heading{margin-bottom:5px}.sl-dashboard .sl-qps-card svg{height:145px;max-height:none}.sl-dashboard .sl-legend{display:flex;justify-content:center;gap:20px;font-size:11px;opacity:.7}.sl-dashboard .sl-legend i{display:inline-block;width:12px;height:3px;margin-right:6px;vertical-align:middle}' +
+        '.sl-dashboard .sl-axis-labels{display:flex;justify-content:space-between;font-size:10px;opacity:.5;margin-top:4px;gap:10px}.sl-dashboard .sl-events{max-height:292px;min-height:240px;overflow:auto}.sl-dashboard .sl-event-date{font-size:11px;display:table;padding:3px 9px;background:#8881;border-radius:3px;margin:8px 0}.sl-dashboard .sl-event{display:flex;gap:9px;align-items:center;margin:12px 0;font-size:11px;min-width:0}.sl-dashboard .sl-badge{border:1px solid #12bfc2;color:#08aeb1;background:#0db9bb0c;border-radius:3px;padding:2px 5px;white-space:nowrap}.sl-dashboard .sl-event-site{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sl-dashboard .sl-event time{opacity:.6;white-space:nowrap;font-size:10px}' +
+        '@media(max-width:1450px){.sl-dashboard .sl-card{padding:12px}.sl-dashboard .sl-metric{padding:0 9px}.sl-dashboard .sl-metric strong{font-size:20px}.sl-dashboard .sl-switches{gap:5px}.sl-dashboard .sl-switches button{padding:5px 8px}}' +
+        '@media(max-width:1100px){.sl-dashboard .sl-security-metrics{--sl-count:4;row-gap:18px}.sl-dashboard .sl-security-metrics .sl-metric:nth-child(5){border-left:0;padding-left:0}.sl-dashboard .sl-request-card{grid-column:span 8}.sl-dashboard .sl-intercept-card{grid-column:span 4}.sl-dashboard .sl-qps-card{grid-column:span 4;grid-row:auto}.sl-dashboard .sl-error-card{grid-column:span 4}.sl-dashboard .sl-traffic-main,.sl-dashboard .sl-security-main{grid-template-columns:1fr}.sl-dashboard .sl-trends{grid-template-columns:1fr 1fr}.sl-dashboard .sl-traffic-stats{align-items:stretch}}' +
+        '@media(max-width:780px){.sl-dashboard .sl-request-card,.sl-dashboard .sl-intercept-card,.sl-dashboard .sl-error-card,.sl-dashboard .sl-qps-card{grid-column:span 12}.sl-dashboard .sl-security-metrics{--sl-count:2}.sl-dashboard .sl-security-metrics .sl-metric:nth-child(odd){border-left:0;padding-left:0}.sl-dashboard .sl-trends,.sl-dashboard .sl-security-chart{grid-template-columns:1fr}.sl-dashboard .sl-card-heading{flex-wrap:wrap}}' + '</style>';
+    function dashboardBody(state, d) {
+        const a = d.sections.access || {}, attack = d.sections.attack || {}, up = d.sections.error_upstream || {}, waf = d.sections.error_waf || {}, posture = d.sections.posture || {};
+        const intercepted = total(['block','blacklist','challenge','rate_limit','auth_defense','offline'].map(function (k) { return attack.intercept && attack.intercept[k]; }));
+        const pair = function (label, value, requests, tip) { return '<div class="sl-card sl-error-card"><div class="sl-metrics" style="--sl-count:2">' + dashboardMetric(label + '數',value,{error:true,tip:tip}) + dashboardMetric(label + '率',null,{display:rate(value,requests),error:true,tip:tip}) + '</div></div>'; };
+        let html = dashboardStyle + '<div class="sl-dashboard"><h2>流量分析</h2><div class="sl-traffic-stats">' +
+            '<div class="sl-card sl-request-card"><div class="sl-metrics" style="--sl-count:4">' + dashboardMetric('請求次數',a.access,{icon:'fa-user'}) + dashboardMetric('訪問次數（PV）',a.pv,{icon:'fa-paper-plane'}) + dashboardMetric('獨立訪客（UV）',a.session,{icon:'fa-users'}) + dashboardMetric('獨立 IP',a.ip,{icon:'fa-map-marker'}) + '</div></div>' +
+            '<div class="sl-card sl-intercept-card"><div class="sl-metrics" style="--sl-count:2">' + dashboardMetric('攔截次數',intercepted,{icon:'fa-shield',tip:'SafeLine 各攔截類別計數之和'}) + dashboardMetric('攻擊 IP',attack.attack_ip,{icon:'fa-map-marker'}) + '</div></div>' +
+            '<div class="sl-card sl-qps-card">' + dashboardChart('即時 QPS',[{points:d.sections.qps}],{bars:true,error:d.errors.qps}) + '<div class="sl-footnote">最新五秒區間，每 30 秒更新。</div></div>' +
+            pair('4xx 錯誤',up.error_4xx,a.access,'上游回應 4xx；比率以所選範圍請求次數為分母') + pair('4xx 攔截',waf.error_4xx,a.access,'SafeLine 回應 4xx，包含其 4xx 回應；比率以請求次數為分母') +
+            pair('5xx 錯誤',total([up.error_5xx,waf.error_5xx]),a.access,'上游與 SafeLine 的 5xx 回應之和；比率以請求次數為分母') + '</div>';
+        const trafficError = d.errors.access;
+        if (trafficError) html += '<p class="sl-footnote">' + enc(message(trafficError)) + '</p>';
+        html += '<div class="sl-traffic-main"><section class="sl-card sl-geo-card">' + dashboardGeo(state,d) + '</section><div class="sl-trends"><section class="sl-card">' + dashboardChart('訪問情況',[{points:d.sections.access_trend}],{color:'#279cec',error:d.errors.access_trend}) +
+            '</section><section class="sl-card">' + dashboardChart('攔截情況',[{points:d.sections.intercept_trend}],{color:'#ff6578',error:d.errors.intercept_trend}) + '</section></div></div>';
+        const defenses = [['攻擊防護',total([posture.attack_deny,posture.attack_allow]),'fa-shield'],['黑白名單',total([posture.black_hit,posture.white_hit]),'fa-list-alt'],['頻率限制',posture.acl_hit,'fa-line-chart'],
+            ['等候室',posture.waiting_hit,'fa-hourglass-half'],['人機驗證',total([posture.challenge_deny,posture.challenge_allow]),'fa-user-circle-o'],['身份認證',total([posture.auth_deny,posture.auth_allow]),'fa-key'],['網頁防篡改',Array.isArray(posture.anti_tamper) ? posture.anti_tamper.length ? total(posture.anti_tamper.map(function (v) { return v.count; })) : 0 : null,'fa-file-code-o']];
+        html += '<h2>安全態勢</h2><section class="sl-card"><div class="sl-metrics sl-security-metrics">' + defenses.map(function (v) { return dashboardMetric(v[0],v[1],{icon:v[2]}); }).join('') + '</div>' +
+            (d.errors.posture ? '<p class="sl-footnote">' + enc(message(d.errors.posture)) + '</p>' : '') + '</section>';
+        const trend = d.sections.posture_trend || {};
+        html += '<div class="sl-security-main"><section class="sl-card"><div class="sl-security-chart"><div>' + dashboardChart('攻擊防護趨勢',[{name:'已攔截',points:trend.denied,color:'#ff6578'},{name:'已放行',points:trend.allowed,color:'#279cec'}],{height:230,error:d.errors.posture_trend}) +
+            '</div><div class="sl-source-ips"><h3>攻擊來源 IP</h3>' + dashboardBars(trend.sources,d.errors.posture_trend,'暫無攻擊來源 IP') + '</div></div></section><section class="sl-card">' + dashboardEvents(d) + '</section></div></div>';
+        return html;
+    }
+    function overviewFilters(state) { return state.overviewFilters || (state.overviewFilters = { preset: 'last1Day', siteId: null }); }
+    function ensureDashboard(state) {
+        let panel = state.page.down('#safeline-dashboard'); if (alive(panel)) return panel;
+        const filters = overviewFilters(state);
+        show(state, { xtype:'panel',itemId:'safeline-dashboard',border:false,scrollable:'y',
+            tbar:{enableOverflow:true,items:[{xtype:'tbtext',text:'流量分析與安全態勢'},'->',
+                {xtype:'combo',itemId:'safeline-overview-application',fieldLabel:'應用',labelWidth:35,width:235,queryMode:'local',editable:false,displayField:'name',valueField:'id',value:filters.siteId || 'all',
+                    store:{fields:['id','name'],data:[{id:'all',name:'全部應用'}]},disabled:true,listeners:{select:function(combo){if(!state.dashboardSync){overviewFilters(state).siteId=combo.getValue()==='all' ? null : combo.getValue();loadOverview(state,true);}}}},
+                {xtype:'combo',itemId:'safeline-overview-time',fieldLabel:'時間',labelWidth:35,width:170,queryMode:'local',editable:false,displayField:'name',valueField:'id',value:filters.preset,
+                    store:{fields:['id','name'],data:[{id:'last1Day',name:'近 24 小時'}]},disabled:true,listeners:{select:function(combo){if(!state.dashboardSync){overviewFilters(state).preset=combo.getValue();loadOverview(state,true);}}}}]},
+            items:[{xtype:'component',itemId:'safeline-overview-notice',padding:'10 12',style:'font-size:12px;line-height:1.7;opacity:.7',html:'正在讀取統計…'},
+                {xtype:'component',itemId:'safeline-overview-body',html:'',listeners:{afterrender:function(component){component.getEl().on('click',function(event){
+                    const target = event.getTarget('button[data-safeline-geo-region],button[data-safeline-geo-mode]');if(!target || !user(state))return;
+                    const region=target.getAttribute('data-safeline-geo-region'), mode=target.getAttribute('data-safeline-geo-mode');
+                    if(['world','china'].includes(region))state.geoRegion=region;else if(['access','intercept'].includes(mode))state.geoMode=mode;else return;
+                    renderOverview(state);
+                    const next=component.getEl().down('button[data-safeline-geo-'+(region?'region':'mode')+'="'+(region||mode)+'"]');if(next)next.focus();
+                });}}},
+                Object.assign(grid([],resourceColumns('applications'),function(r){choose(state,r.kind,r.id);}),{itemId:'safeline-overview-attention',title:'資源提醒',hidden:true,height:180,margin:12,
+                    store:{fields:['id','kind','name','status','domains','ports'],data:[]}})] });
+        return state.page.down('#safeline-dashboard');
     }
     function renderOverview(state) {
-        if (!state.overview) { note(state, '正在讀取統計…'); return; }
-        const d = state.overview, a = d.sections.access || {}, attack = d.sections.attack || {}, inv = state.inventory;
-        const metric = function (label, value, basis) { return '<div style="min-width:130px;flex:1' + (basis ? ' 1 30%' : '') + ';padding:14px;border:1px solid #8884"><div>' + enc(label) + '</div><div style="font-size:25px;margin-top:7px">' + enc(value == null ? '不可用' : value) + '</div></div>'; };
-        let html = '<div style="display:flex;gap:10px;flex-wrap:wrap;padding:14px">' + metric('防護應用', inv && !inv.errors.applications ? inv.resources.applications.length : null) + metric('請求數', a.access) + metric('來源 IP', a.ip) + metric('攻擊來源 IP', attack.attack_ip) + '</div>';
-        const labels = { block: '檢測攔截', blacklist: '黑名單', challenge: '驗證', rate_limit: '頻率限制', auth_defense: '認證防護', offline: '離線模式' };
-        html += '<div style="display:flex;gap:10px;flex-wrap:wrap;padding:0 14px 14px">' + Object.keys(labels).map(function (k) { return metric(labels[k], attack.intercept && attack.intercept[k], true); }).join('') + '</div>';
-        html += chart('請求趨勢', d.sections.access_trend) + chart('攔截趨勢', d.sections.intercept_trend) + chart('QPS（上游即時資料）', d.sections.qps);
-        Object.keys(d.errors).forEach(function (k) { html += '<p style="padding:0 18px">' + enc(k + '：' + message(d.errors[k])) + '</p>'; });
-        const attention = inv ? inv.resources.applications.filter(function (r) { return ['error', 'pending'].includes(r.status.code); }).concat(inv.resources.certificates.filter(function (r) { return ['error', 'pending'].includes(r.status.code); })) : [];
-        show(state, { xtype: 'panel', layout: { type: 'vbox', align: 'stretch' }, border: false, scrollable: 'y',
-            tbar: [{ xtype: 'tbtext', text: '統計範圍：最近 24 小時' }, '->',
-                { xtype: 'tbtext', text: enc('更新：' + date(d.updated_at)) }],
-            items: [{ xtype: 'component', html: html }, Object.assign(grid(attention, resourceColumns('applications'), function (r) { choose(state, r.kind, r.id); }, '異常應用及即將到期／失效憑證'),
-                { title: '需關注', height: 220, minHeight: 180 })] });
+        if (!state.active || state.selection.kind !== 'root' || state.tab !== 'overview' || !alive(state.page)) return;
+        const panel = ensureDashboard(state), filters = overviewFilters(state), d = state.overview;
+        const caps = d && d.capabilities || state.dashboardCaps;
+        const app = panel.down('#safeline-overview-application'), timeFilter = panel.down('#safeline-overview-time');
+        const appRows = [{id:'all',name:'全部應用'}].concat((state.inventory && state.inventory.resources.applications || []).map(function(r){return {id:r.id,name:r.name};}));
+        const labels = {last1Day:'近 24 小時',today:'今天',last7Day:'近 7 天',last30Day:'近 30 天'};
+        state.dashboardSync = true;
+        const appKey=JSON.stringify(appRows), timeRows=(caps && caps.presets || ['last1Day']).map(function(p){return {id:p,name:labels[p]};}),timeKey=JSON.stringify(timeRows);
+        if(panel._appRows!==appKey){app.getStore().loadData(appRows);panel._appRows=appKey;}if(panel._timeRows!==timeKey){timeFilter.getStore().loadData(timeRows);panel._timeRows=timeKey;}
+        app.setValue(filters.siteId || 'all');timeFilter.setValue(filters.preset);app.setDisabled(!caps || !(caps.traffic.applications || caps.security.applications));timeFilter.setDisabled(!caps);
+        state.dashboardSync=false;
+        let notice = state.overviewPending ? '正在更新所選範圍…' : d ? '更新：'+date(d.updated_at)+' · '+date(d.begin_time)+' – '+date(d.end_time) : '正在讀取統計…';
+        if(caps && !caps.traffic.applications && !caps.security.applications)notice+='；此版本的應用統計僅提供全站資料。';
+        if(caps && caps.traffic.presets.length===1)notice+=caps.security.presets.includes('last7Day') ? ' 流量分析限近 24 小時；安全態勢可選近 7 天。' : ' 暫僅使用已確認的近 24 小時範圍。';
+        panel.down('#safeline-overview-notice').update(enc(notice));
+        const body = panel.down('#safeline-overview-body');
+        body.update(d ? dashboardBody(state,d) : '<div style="padding:24px;opacity:.6">正在讀取流量分析與安全態勢…</div>');
+        const inv=state.inventory;
+        let attention = inv ? inv.resources.applications.filter(function(r){return ['error','pending'].includes(r.status.code) && (!filters.siteId || r.id===filters.siteId);}) : [];
+        if(inv && !filters.siteId)attention=attention.concat(inv.resources.certificates.filter(function(r){return ['error','pending'].includes(r.status.code);}));
+        const table=panel.down('#safeline-overview-attention');table.getStore().loadData(attention);table.setVisible(!!attention.length);
     }
-    function loadOverview(state) {
-        request(state, '/overview?hours=' + state.hours, {}, function (data) { state.overview = data; renderOverview(state); }, function (code) { note(state, message(code)); }, true);
+    function loadOverview(state, changed) {
+        if(!state.active || state.selection.kind!=='root' || state.tab!=='overview')return;
+        if(changed){cancel(state,false);state.overview=null;}
+        if(state.overviewPending)return;
+        const filters=Object.assign({},overviewFilters(state)), serial=(state.overviewSerial || 0)+1;state.overviewSerial=serial;state.overviewPending=true;renderOverview(state);
+        const params={preset:filters.preset,utc_offset:new Date().getTimezoneOffset()};if(filters.siteId)params.site_id=filters.siteId;
+        request(state,'/overview?'+new URLSearchParams(params).toString(),{timeout:90000},function(data){
+            if(serial!==state.overviewSerial)return;state.overviewPending=false;
+            if(!data.sections || !data.errors || !data.capabilities || !data.filters || data.filters.preset!==filters.preset || String(data.filters.site_id || '')!==String(filters.siteId || '')){panelOverviewError(state,'safeline_unexpected_response');return;}
+            state.overview=data;state.dashboardCaps=data.capabilities;renderOverview(state);
+        },function(code){if(serial!==state.overviewSerial)return;state.overviewPending=false;panelOverviewError(state,code);},true);
+    }
+    function panelOverviewError(state, code) {
+        const panel = ensureDashboard(state);panel.down('#safeline-overview-notice').update(enc(message(code)+(state.overview ? ' · 資料最後更新：'+date(state.overview.updated_at) : '')));
+        if(!state.overview)panel.down('#safeline-overview-body').update('<div style="padding:24px">'+enc(message(code))+'</div>');
     }
     function renderConnection(state) {
         const d = state.connection, c = d.connection, h = state.health || {};
@@ -674,13 +847,13 @@
             state.origin = data.origin_id; state.inventory = data; state.lastInventory = data.updated_at;
             renderTree(state);
             status(state, (Object.keys(data.errors).length ? '部分資源無法更新 · ' : '已更新 · ') + date(data.updated_at));
-            if (state.selection.kind === 'root' && state.tab === 'overview' && state.overview) renderOverview(state);
+            if (state.selection.kind === 'root' && state.tab === 'overview') renderOverview(state);
             else if (!(state.selection.kind === 'root' && ['connection', 'events'].includes(state.tab))) renderSelection(state);
         }, function (code) {
             status(state, message(code));
             if (state.inventory) types.forEach(function (t) { state.inventory.errors[t.id] = code; state.inventory.resources[t.id].forEach(function (row) { row.stale = true; }); });
             renderTree(state);
-            if (state.selection.kind === 'root' && state.tab === 'overview' && state.overview) renderOverview(state);
+            if (state.selection.kind === 'root' && state.tab === 'overview') renderOverview(state);
             if (!state.inventory && state.tab !== 'connection') note(state, message(code));
         }, false);
     }
@@ -720,7 +893,7 @@
         if (!owner || typeof owner.add !== 'function' || !workspace || typeof workspace.setContent !== 'function') return null;
         const state = { native: native, workspace: workspace, active: false, generation: 0, navigation: 0, requests: new Set(),
             selection: { kind: 'root' }, tab: null, inventory: null, connection: null, page: null, editor: null, hours: 24, logHours: 0,
-            logPage: 1, logMode: 'events', logSource: 'general', logFilters: {} };
+            logPage: 1, logMode: 'events', logSource: 'general', logFilters: {}, overviewPending:false, overviewSerial:0, geoRegion:'world', geoMode:'access' };
         const tree = Ext.create('Ext.tree.Panel', { itemId: 'pve-safeline-tree', hidden: true, flex: 1, border: false, rootVisible: true, useArrows: true, hideHeaders: true,
             store: { model: 'Ext.data.TreeModel', autoDestroy: true, root: { id: 'safeline-root', kind: 'root', text: 'SafeLine WAF', iconCls: 'fa fa-shield', expanded: true, children: [] } },
             columns: [{ xtype: 'treecolumn', dataIndex: 'text', flex: 1, renderer: function (value, meta, record) { if (meta) meta.tdAttr = 'data-qtip="' + enc(record.get('qtip') || value) + '"'; return enc(value); } }],

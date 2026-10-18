@@ -1,7 +1,7 @@
 {
   "id": "safeline",
   "name": "SafeLine WAF",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "api_version": 1,
   "entrypoint": "plugins.safeline.plugin:setup",
   "requires": [],
