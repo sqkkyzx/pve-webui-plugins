@@ -30,7 +30,8 @@ _WRITES = {("PUT", "/api/open/site"), ("PUT", "/api/open/site/mode"),
            ("PUT", "/api/open/global/proxy"), ("PUT", "/api/commercial/site/group/switch"),
            ("PUT", "/api/open/site/challenge"), ("PUT", "/api/open/site/defense"), ("POST", "/api/open/security_posture/site"),
            ("POST", "/api/open/challenge/config"), ("POST", "/api/open/policy"), ("PUT", "/api/open/policy/orders"),
-           ("POST", "/api/open/cloud/policies/subscribe"), ("PUT", "/api/open/site/0/acl"), ("PUT", "/api/acl/relieve")}
+           ("POST", "/api/open/cloud/policies/subscribe"), ("PUT", "/api/open/site/0/acl"), ("PUT", "/api/acl/relieve"),
+           ("DELETE", "/api/open/policy")}
 _PROXY_WRITE = re.compile(r"/api/open/site/[1-9][0-9]*/proxy\Z")
 _APP_WRITES = {
     "PUT": re.compile(r"/api/open/site/[1-9][0-9]*/(?:acl(?:/[1-9][0-9]*)?|semantics|nginx_config|forwarding_rules/[1-9][0-9]*(?:/switch)?)\Z"),

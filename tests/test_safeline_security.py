@@ -41,7 +41,7 @@ def security(tmp_path, monkeypatch):
 
     def handler(request):
         path, method = request.url.path, request.method
-        paths = {"/api/open/policy", "/api/open/policy/detail", "/api/open/policy/orders", "/api/open/cloud/policies",
+        paths = {"/api/open/policy", "/api/open/policy/detail", "/api/open/policy/orders", "/api/open/policy/switch", "/api/open/cloud/policies",
                  "/api/open/cloud/policies/subscribe", "/api/open/records/acl", "/api/open/records/waiting", "/api/open/system/edition",
                  "/api/open/site/0/acl", "/api/acl/relieve", "/api/open/ipgroup", "/api/open/ja4"}
         if path not in paths:
@@ -51,13 +51,18 @@ def security(tmp_path, monkeypatch):
         assert not {"cookie", "authorization", "x-pve-plugins-csrf"} & set(request.headers)
         if method != "GET":
             payload = json.loads(request.content); state["writes"].append((method, path, payload)); result = None
-            if state["failure"] == "timeout": raise httpx.ReadTimeout(TOKEN)
+            if state["failure"] == "timeout" or state["failure"] == "order-timeout" and path.endswith("/orders"): raise httpx.ReadTimeout(TOKEN)
             if state["failure"] == "business": return httpx.Response(200, json={"data": None, "err": "failure", "msg": TOKEN})
             if state["failure"] != "mismatch":
                 if path == "/api/open/policy" and method == "POST":
                     result = 100; state["rules"].append(dict(copy.deepcopy(payload), id=result, order=3, builtin=False, cloud_id=0))
                 elif path == "/api/open/policy" and method == "PUT":
                     next(r for r in state["rules"] if r["id"] == payload["id"]).update(payload)
+                elif path == "/api/open/policy" and method == "DELETE":
+                    assert set(payload) == {"id"}; state["rules"] = [r for r in state["rules"] if r["id"] != payload["id"]]
+                elif path == "/api/open/policy/switch":
+                    assert method == "PUT" and set(payload) == {"id", "is_enabled"}
+                    next(r for r in state["rules"] if r["id"] == payload["id"])["is_enabled"] = payload["is_enabled"]
                 elif path == "/api/open/policy/orders":
                     assert method == "PUT" and set(payload) == {"orders"}
                     for row in payload["orders"]: next(r for r in state["rules"] if r["id"] == row["id"])["order"] = row["order"]
@@ -108,6 +113,103 @@ def create_changes(pattern=None, **values):
                 pattern=pattern or [[condition()]], **values)
 
 
+@pytest.mark.parametrize("key,editable,removable", [(2, True, True), (1, False, False), (9, False, True)])
+def test_summary_capabilities_preserve_native_builtin_and_online_rule_boundaries(security, key, editable, removable):
+    client, state = security; headers = configure(client)
+    result = client.get(BASE + f"/policy-management/summary?id={key}", headers=headers)
+    assert result.status_code == 200, result.text
+    data = result.json()
+    assert data["capabilities"]["can_edit"] is editable and data["capabilities"]["can_edit_pattern"] is editable
+    assert data["capabilities"]["can_delete"] is removable and data["capabilities"]["can_switch"] is True
+    assert data["values"]["order"] == next(r for r in state["rules"] if r["id"] == key)["order"]
+    assert data["preview"] == [[condition()]] and data["options"]["groups"]
+    assert not state["writes"] and TOKEN not in result.text
+
+
+@pytest.mark.parametrize("pattern", [[[condition("req_header", "future_op", [" keep spaces ", ""], "X-A")]],
+    [[condition("req_header", "eq", ["Bearer private-credential"], "Authorization")]]])
+def test_summary_masks_sensitive_preview_and_locks_unknown_patterns_without_blocking_metadata(security, pattern):
+    client, state = security; headers = configure(client); original = state["rules"][0]; original["pattern"] = pattern
+    path = "/policy-management/summary?id=2"; response = client.get(BASE + path, headers=headers)
+    data = response.json(); assert "pattern" in data["locked"] and "pattern" not in data["values"]
+    assert data["capabilities"]["can_edit"] is True and data["capabilities"]["can_edit_pattern"] is False
+    assert "private-credential" not in response.text
+    body = draft(client, path, {"name": "Renamed"}, headers)
+    assert client.post(BASE + path, json=body, headers=headers).json()["outcome"] == "confirmed"
+    assert state["writes"][0][2]["pattern"] == pattern
+
+
+def test_summary_reorders_the_full_target_list_after_a_type_change_and_retains_unedited_fields(security):
+    client, state = security; headers = configure(client); original = copy.deepcopy(state["rules"][0])
+    path = "/policy-management/summary?id=2"
+    body = draft(client, path, {"name": "Moved", "action": 0, "order": 2}, headers)
+    result = client.post(BASE + path, json=body, headers=headers)
+    assert result.status_code == 200 and result.json()["outcome"] == "confirmed", result.text
+    assert [(m, p) for m, p, _ in state["writes"]] == [("PUT", "/api/open/policy"), ("PUT", "/api/open/policy/orders")]
+    assert state["writes"][1][2] == {"orders": [{"id": 4, "order": 1}, {"id": 2, "order": 2}]}
+    payload = state["writes"][0][2]
+    for key in ("pattern", "expire", "level", "log", "is_enabled"):
+        assert payload[key] == original[key]
+    assert state["rules"][0]["negate"] == original["negate"]
+    assert state["rules"][1]["action"] == 1 and state["rules"][1]["order"] == 2
+
+
+@pytest.mark.parametrize("changes", [{"order": 0}, {"order": True}, {"order": 3}, {"order": "2"}, {"action": 999},
+    {"name": ""}, {"is_enabled": False}, {"pattern": []}])
+def test_invalid_summary_changes_never_write(security, changes):
+    client, state = security; headers = configure(client); path = "/policy-management/summary?id=2"
+    result = client.post(BASE + path, json=draft(client, path, changes, headers), headers=headers)
+    assert result.status_code == 422, result.text
+    assert not state["writes"]
+
+
+def test_partial_metadata_and_order_write_is_unknown_and_cannot_be_replayed(security):
+    client, state = security; headers = configure(client); path = "/policy-management/summary?id=2"
+    body = draft(client, path, {"name": "Applied", "order": 2}, headers); state["failure"] = "order-timeout"
+    result = client.post(BASE + path, json=body, headers=headers)
+    assert result.status_code == 200 and result.json()["outcome"] == "unknown", result.text
+    assert state["rules"][0]["name"] == "Applied" and len(state["writes"]) == 2
+    assert client.post(BASE + path, json=body, headers=headers).json()["outcome"] == "unknown"
+    assert len(state["writes"]) == 2
+
+
+@pytest.mark.parametrize("key", [1, 2, 9])
+def test_summary_switch_is_a_narrow_native_write_and_verified_readback(security, key):
+    client, state = security; headers = configure(client); path = f"/policy-management/switch?id={key}"
+    original = next(r for r in state["rules"] if r["id"] == key); before = copy.deepcopy(original)
+    result = client.post(BASE + path, json=draft(client, path, {"is_enabled": False}, headers), headers=headers)
+    assert result.json()["outcome"] == "confirmed", result.text
+    assert state["writes"] == [("PUT", "/api/open/policy/switch", {"id": key, "is_enabled": False})]
+    assert original == {**before, "is_enabled": False}
+
+
+@pytest.mark.parametrize("key", [2, 9])
+def test_summary_delete_names_the_exact_resource_and_checks_its_absence(security, key):
+    client, state = security; headers = configure(client); path = f"/policy-management/delete?id={key}"
+    name = next(r for r in state["rules"] if r["id"] == key)["name"]; before = {r["id"] for r in state["rules"]}
+    body = draft(client, path, {"confirm_name": name}, headers)
+    assert client.post(BASE + path, json=body, headers=headers).json()["outcome"] == "confirmed"
+    assert state["writes"] == [("DELETE", "/api/open/policy", {"id": key})]
+    assert {r["id"] for r in state["rules"]} == before - {key}
+
+
+@pytest.mark.parametrize("key,changes", [(1, {"confirm_name": "Rule 2"}), (2, {"confirm_name": "Another"}),
+    (2, {"confirm_name": "Rule 2", "id": 3})])
+def test_deletion_cannot_remove_builtin_rules_or_a_different_target(security, key, changes):
+    client, state = security; headers = configure(client); path = f"/policy-management/delete?id={key}"
+    assert client.post(BASE + path, json=draft(client, path, changes, headers), headers=headers).status_code == 422
+    assert not state["writes"]
+
+
+@pytest.mark.parametrize("section,changes", [("delete", {"confirm_name": "Rule 2"}), ("switch", {"is_enabled": False})])
+def test_unconfirmed_summary_actions_are_unknown_and_never_retried(security, section, changes):
+    client, state = security; headers = configure(client); path = f"/policy-management/{section}?id=2"
+    body = draft(client, path, changes, headers); state["failure"] = "mismatch"
+    assert client.post(BASE + path, json=body, headers=headers).json()["outcome"] == "unknown"
+    assert client.post(BASE + path, json=body, headers=headers).json()["outcome"] == "unknown"
+    assert len(state["writes"]) == 1
+
+
 @pytest.mark.parametrize("kind,expected", [("rate", {"begin": "1790146413", "end": "1790146413"}),
                                             ("waiting", {"started_at_begin": "1790146412", "started_at_end": "1790146413"})])
 def test_history_units_and_bounded_public_fields(security, kind, expected):
@@ -121,7 +223,8 @@ def test_history_units_and_bounded_public_fields(security, kind, expected):
 
 
 @pytest.mark.parametrize("path", ["/cc/history/rate", "/cc/history/waiting", "/cc/configuration", "/cc/relieve",
-                                  "/policy-management/create", "/policy-management/edit?id=2", "/policy-management/order?action=1", "/policy-management/subscribe"])
+                                  "/policy-management/create", "/policy-management/edit?id=2", "/policy-management/order?action=1", "/policy-management/subscribe",
+                                  "/policy-management/summary?id=2", "/policy-management/switch?id=2", "/policy-management/delete?id=2"])
 def test_new_reads_authorize_before_external_requests(security, path):
     client, state = security
     assert client.get(BASE + path).status_code == 401
@@ -129,7 +232,8 @@ def test_new_reads_authorize_before_external_requests(security, path):
 
 
 @pytest.mark.parametrize("path", ["/cc/configuration", "/cc/relieve", "/policy-management/create", "/policy-management/edit?id=2",
-                                  "/policy-management/order?action=1", "/policy-management/subscribe"])
+                                  "/policy-management/order?action=1", "/policy-management/subscribe", "/policy-management/summary?id=2",
+                                  "/policy-management/switch?id=2", "/policy-management/delete?id=2"])
 def test_every_new_write_requires_the_existing_pve_csrf_boundary(security, path):
     client, state = security; configure(client)
     assert client.post(BASE + path, json={}, headers={"cookie": COOKIE}).status_code == 403
@@ -139,7 +243,8 @@ def test_every_new_write_requires_the_existing_pve_csrf_boundary(security, path)
 @pytest.mark.parametrize("path", ["/cc/history/rate?page=0", "/cc/history/rate?page_size=101", "/cc/history/waiting?ip=x",
     "/cc/history/rate?start=2&end=1", "/cc/history/rate?start=1.2", "/cc/history/rate?site=%0A", "/cc/relieve?host=x",
     "/policy-management/create?id=2", "/policy-management/order?action=999", "/policy-management/order?action=1&action=0",
-    "/policy-management/edit?id=0", "/cc/configuration?site=12"])
+    "/policy-management/edit?id=0", "/cc/configuration?site=12", "/policy-management/summary?id=2&id=3",
+    "/policy-management/switch?id=2&action=1", "/policy-management/delete?id=-1"])
 def test_invalid_scopes_never_reach_waf(security, path):
     client, state = security; headers = configure(client)
     assert client.get(BASE + path, headers=headers).status_code == 422

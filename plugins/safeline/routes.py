@@ -406,9 +406,9 @@ def register_routes(context, store, service):
         if area == "cc":
             if section not in {"configuration", "relieve"}: raise HTTPException(422, "invalid_safeline_resource")
             return cc_filters(request) if section == "relieve" else query(request, set())
-        if section not in {"create", "edit", "order", "subscribe"}: raise HTTPException(422, "invalid_safeline_resource")
-        values = query(request, {"id"} if section == "edit" else {"action"} if section == "order" else set())
-        if section == "edit": return {"id": integer(values.get("id", ""), 1, 9_007_199_254_740_991)}
+        if section not in {"create", "edit", "summary", "switch", "delete", "order", "subscribe"}: raise HTTPException(422, "invalid_safeline_resource")
+        values = query(request, {"id"} if section in {"edit", "summary", "switch", "delete"} else {"action"} if section == "order" else set())
+        if section in {"edit", "summary", "switch", "delete"}: return {"id": integer(values.get("id", ""), 1, 9_007_199_254_740_991)}
         if section == "order": return {"action": integer(values.get("action", ""), 0, 1)}
         return {}
 

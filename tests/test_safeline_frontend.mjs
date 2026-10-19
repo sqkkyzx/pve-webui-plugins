@@ -136,6 +136,124 @@ function policyList(b, state) {
     return state.page.down('#safeline-policy-list');
 }
 function button(component, text) { return component.children.find(c => c.text === text); }
+function policySummary(b, state, overrides = {}) {
+    b.reply('/connection', connection); b.reply('/inventory', policyInventory());
+    state.tree.fire('itemclick', {}, state.tree.getStore().getNodeById('deny:2'));
+    const data = { ...securityMeta, values: { ...policyRules[1], log: true }, rules: policyRules,
+        capabilities: { premium: false, can_edit: true, can_edit_pattern: true, can_switch: true, can_delete: true }, ...overrides };
+    b.reply('/policy-management/summary?id=2', data);
+    return state.page.down('#safeline-policy-summary');
+}
+
+test('rule summary replaces the conditions tab with read-only, separate human-readable groups', () => {
+    const b = browser(), state = b.enter(), panel = policySummary(b, state, { values: { ...policyRules[1], pattern: [
+        [{ k: 'website', op: 'eq', sub_k: '', v: ['12'] }, { k: 'req_header', op: 'exist', sub_k: 'User-Agent', v: [] }],
+        [{ k: 'src_ip', op: 'in', sub_k: '', v: ['7'] }, { k: 'ja4', op: 'ja4_in', sub_k: '', v: ['81'] }]] } });
+    assert.equal(state.page.down('#safeline-nav').getStore().rows.map(r => r.get('id')).join(','), 'summary,scope,logs');
+    assert.equal(state.page.down('#safeline-resource-edit').hidden, true); assert.equal(state.page.down('#safeline-resource-switch').hidden, true);
+    const first = panel.down('#safeline-rule-group-0'), second = panel.down('#safeline-rule-group-1');
+    assert.equal(first.columns.length, 2); assert.equal(first.plugins, undefined); assert.equal(first.scrollable, false);
+    assert.equal(first.getStore().rows[0].get('name'), '防護應用 等於'); assert.equal(first.getStore().rows[0].get('value'), 'Admin · app.example');
+    assert.equal(first.getStore().rows[1].get('name'), '並且 請求 Header「User-Agent」 存在');
+    assert.equal(second.getStore().rows[0].get('value'), '<office>'); assert.equal(second.getStore().rows[1].get('value'), 'JA4 library');
+    assert.equal(first.columns[1].renderer('<office>'), '<div style="white-space:pre-wrap;overflow-wrap:anywhere">&lt;office&gt;</div>');
+    const html = panel.down('#safeline-rule-body').children.filter(c => c.html).map(c => c.html).join('');
+    assert.match(html, /匹配任意條件組即命中規則；每個條件組內需要同時匹配所有條件。/); assert.match(html, /或者（OR）/);
+    assert.equal(panel.down('#safeline-rule-enable').disabled, true); assert.equal(panel.down('#safeline-rule-disable').disabled, false);
+    assert.equal(panel.down('#safeline-rule-save').disabled, true); assert.equal(panel.hasDraft(), false);
+    assert.equal(b.requests.filter(r => r.options.method === 'POST').length, 0);
+});
+
+test('summary metadata is a local draft, preserves unknown patterns and survives background refresh', () => {
+    const b = browser(), state = b.enter(), pattern = [[{ k: 'req_header', op: 'future_operator', sub_k: 'X-A', v: [' keep spaces ', ''] }]];
+    const panel = policySummary(b, state, { values: { ...policyRules[1], pattern: undefined }, preview: pattern, locked: ['pattern'],
+        capabilities: { can_edit: true, can_edit_pattern: false, can_switch: true, can_delete: true } });
+    assert.equal(panel.down('#safeline-rule-add-or').disabled, true);
+    button(panel.down('#safeline-rule-metadata'), '編輯基本資訊').handler();
+    state.editor.down('[name=name]').setValue('New name'); state.editor.down('[name=action]').setValue(0); state.editor.down('[name=order]').setValue(2);
+    state.editor.down('#safeline-rule-input-apply').handler();
+    assert.equal(state.editor, null); assert.equal(panel.hasDraft(), true); assert.equal(panel.down('#safeline-rule-delete').disabled, true);
+    assert.equal(b.requests.filter(r => r.options.method === 'POST').length, 0);
+    state.tree.tbar[0].handler(); b.reply('/inventory', policyInventory()); assert.equal(state.page.down('#safeline-policy-summary'), panel);
+    panel.down('#safeline-rule-save').handler(); const request = b.requests.at(-1);
+    assert.equal(request.options.url, base + '/policy-management/summary?id=2');
+    assert.deepEqual(JSON.parse(JSON.stringify(request.options.jsonData.changes)), { name: 'New name', action: 0, order: 2 });
+    assert.equal(request.options.headers['X-PVE-Plugins-CSRF'], 'csrf-value');
+    assert.equal(request.options.jsonData.fingerprint, securityMeta.fingerprint); assert.match(request.options.jsonData.operation_id, /^[a-f0-9-]{36}$/);
+    b.reply('/policy-management/summary?id=2', { outcome: 'confirmed' }, 200, request);
+    assert.equal(state.selection.kind, 'allow'); assert.equal(panel.hasDraft(), false);
+    const fresh = policyInventory(); fresh.resources.deny = fresh.resources.deny.filter(r => r.id !== '2'); fresh.resources.allow.push({ ...policyRules[1], kind: 'allow', action: 0, name: 'New name' });
+    b.reply('/inventory', fresh); assert.ok(b.requests.some(r => !r.replied && r.options.url === base + '/policy-management/summary?id=2'));
+});
+
+test('AND/OR additions and selected removals only change the summary draft until save', () => {
+    const b = browser(), state = b.enter(), panel = policySummary(b, state);
+    button(panel.down('#safeline-rule-group-0'), '添加 AND 條件').handler();
+    state.editor.down('[name=v]').setValue('192.0.2.44'); state.editor.down('#safeline-rule-input-apply').handler();
+    let group = panel.down('#safeline-rule-group-0'); assert.equal(group.getStore().rows.length, 2);
+    group.getSelectionModel().select(group.getStore().rows[1]); group.fire('selectionchange', {}, group.getSelectionModel().getSelection());
+    assert.equal(panel.down('#safeline-rule-delete-conditions-0').disabled, false);
+    panel.down('#safeline-rule-delete-conditions-0').handler(); assert.equal(panel.down('#safeline-rule-group-0').getStore().rows.length, 1);
+    panel.down('#safeline-rule-add-or').handler(); state.editor.down('[name=v]').setValue('192.0.2.77'); state.editor.down('#safeline-rule-input-apply').handler();
+    assert.ok(panel.down('#safeline-rule-group-1')); assert.equal(b.requests.filter(r => r.options.method === 'POST').length, 0);
+    button(panel.down('#safeline-rule-group-0'), '刪除本條件組').handler(); assert.equal(panel.down('#safeline-rule-group-1'), null);
+    group = panel.down('#safeline-rule-group-0'); assert.equal(button(group, '刪除本條件組').disabled, true);
+    group.getSelectionModel().select(group.getStore().rows[0]); group.fire('selectionchange', {}, group.getSelectionModel().getSelection());
+    assert.equal(panel.down('#safeline-rule-delete-conditions-0').disabled, true);
+    panel.down('#safeline-rule-save').handler(); const request = b.requests.at(-1);
+    assert.deepEqual(JSON.parse(JSON.stringify(request.options.jsonData.changes)), { pattern: [[{ k: 'src_ip', op: 'eq', sub_k: '', v: ['192.0.2.77'] }]] });
+    b.reply('/policy-management/summary?id=2', { outcome: 'unknown', code: 'safeline_write_unknown' }, 200, request);
+    assert.equal(panel.down('#safeline-rule-save').disabled, true); assert.equal(panel.hasDraft(), true);
+    const n = b.requests.length; panel.down('#safeline-rule-save').handler(); assert.equal(b.requests.length, n);
+});
+
+test('changing list type retains the explicitly chosen position even when its number is unchanged', () => {
+    const b = browser(), state = b.enter(), panel = policySummary(b, state);
+    button(panel.down('#safeline-rule-metadata'), '編輯基本資訊').handler();
+    state.editor.down('[name=action]').setValue(0); state.editor.down('#safeline-rule-input-apply').handler();
+    panel.down('#safeline-rule-save').handler();
+    assert.deepEqual(JSON.parse(JSON.stringify(b.requests.at(-1).options.jsonData.changes)), { action: 0, order: 1 });
+});
+
+test('a changed WAF origin clears a pending local summary draft', () => {
+    const b = browser(), state = b.enter(), panel = policySummary(b, state);
+    button(panel.down('#safeline-rule-metadata'), '編輯基本資訊').handler();
+    state.editor.down('[name=name]').setValue('Draft'); state.editor.down('#safeline-rule-input-apply').handler();
+    state.tree.tbar[0].handler(); const next = policyInventory(); next.origin_id = 'different-waf'; b.reply('/inventory', next);
+    assert.equal(state.selection.kind, 'root'); assert.equal(panel.destroyed, true);
+});
+
+test('editing a condition preserves literal whitespace and cancelling discards only the local edit', () => {
+    const pattern = [[{ k: 'req_header', op: 'eq', sub_k: 'X-App', v: [' a ', 'b'] }]], b = browser(), state = b.enter();
+    const panel = policySummary(b, state, { values: { ...policyRules[1], pattern } }), group = panel.down('#safeline-rule-group-0');
+    group.fire('itemdblclick', {}, group.getStore().rows[0]);
+    assert.equal(state.editor.down('[name=v]').getValue(), ' a \nb'); state.editor.down('[name=v]').setValue(' a \nc ');
+    state.editor.down('#safeline-rule-input-apply').handler(); panel.down('#safeline-rule-save').handler();
+    assert.deepEqual(JSON.parse(JSON.stringify(b.requests.at(-1).options.jsonData.changes.pattern[0][0].v)), [' a ', 'c ']);
+});
+
+test('summary switches and deletion review the exact rule, and reject a wrong deletion name locally', () => {
+    for (const remove of [false, true]) {
+        const b = browser(), state = b.enter(), panel = policySummary(b, state);
+        panel.down(remove ? '#safeline-rule-delete' : '#safeline-rule-disable').handler();
+        const path = '/policy-management/' + (remove ? 'delete' : 'switch') + '?id=2';
+        b.reply(path, { ...securityMeta, values: policyRules[1], capabilities: { can_delete: true, can_switch: true } });
+        const dialog = state.editor;
+        if (remove) { dialog.down('[name=confirm_name]').setValue('Other rule'); const n = b.requests.length; dialog.down('#safeline-security-dialog-save').handler(); assert.equal(b.requests.length, n); dialog.down('[name=confirm_name]').setValue('First'); }
+        dialog.down('#safeline-security-dialog-save').handler(); const request = b.requests.at(-1);
+        assert.equal(request.options.method, 'POST'); assert.equal(request.options.url, base + path);
+        assert.deepEqual(JSON.parse(JSON.stringify(request.options.jsonData.changes)), remove ? { confirm_name: 'First' } : { is_enabled: false });
+        b.reply(path, { outcome: 'confirmed' }, 200, request);
+        assert.equal(dialog.destroyed, true); assert.equal(state.selection.kind, remove ? 'lists' : 'deny');
+    }
+});
+
+test('late summary reads and local edits cannot survive navigation or logout', () => {
+    const b = browser(), state = b.enter(), panel = policySummary(b, state);
+    button(panel.down('#safeline-rule-group-0'), '添加 AND 條件').handler(); const dialog = state.editor;
+    b.workspace.onLogin(null); assert.equal(dialog.destroyed, true); assert.equal(state.editor, null);
+    dialog.down('#safeline-rule-input-apply').handler(); assert.equal(b.requests.filter(r => r.options.method === 'POST').length, 0);
+});
 
 test('resource tree merges both lists with action prefixes and aliases mixed libraries without changing resource identity', () => {
     const b = browser(), state = b.enter(); b.reply('/connection', connection); b.reply('/inventory', policyInventory());
@@ -712,8 +830,8 @@ test('resource editor submits only changed fields with a revision, fingerprint, 
     assert.ok(b.requests.some((request) => request.options.url === base + '/inventory' && !request.replied));
 });
 
-test('mode editor and policy switch use explicit selections and do not overwrite resource settings', () => {
-    for (const [kind, section, values, key, next] of [['applications', 'mode', { mode: 0 }, 'mode', 2], ['deny', 'switch', { is_enabled: true }, 'is_enabled', false]]) {
+test('mode editor uses explicit selections and does not overwrite resource settings', () => {
+    for (const [kind, section, values, key, next] of [['applications', 'mode', { mode: 0 }, 'mode', 2]]) {
         const b = browser(), state = b.enter(), { dialog } = openResourceEditor(b, state, section, values, kind);
         const field = dialog.down('#safeline-input-' + key); if (key === 'is_enabled') field.checked = next; else field.value = next;
         dialog.down('#safeline-resource-save').handler();
@@ -731,14 +849,6 @@ test('resource conflicts and unknown writes keep the draft and prevent automatic
         const count = b.requests.length; for (const timer of [...b.timers]) timer.fn();
         assert.equal(b.requests.length, count, 'polling stays paused while the edit window is open');
     }
-});
-
-test('unchanged policy conditions preserve whitespace, empty values and existing operators', () => {
-    const b = browser(), state = b.enter();
-    const pattern = [[{ k: 'req_header', op: 'future_operator', v: [' keep spaces ', ''] }]];
-    const { dialog } = openResourceEditor(b, state, 'settings', { name: 'before', log: true, pattern }, 'deny');
-    dialog.down('#safeline-input-name').value = 'renamed'; dialog.down('#safeline-resource-save').handler();
-    assert.deepEqual(JSON.parse(JSON.stringify(b.requests.at(-1).options.jsonData.changes)), { name: 'renamed' });
 });
 
 test('certificate editor starts blank and only sends a new certificate when explicitly saved', () => {

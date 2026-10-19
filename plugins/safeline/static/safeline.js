@@ -509,6 +509,7 @@
         const tab = state.tab, kind = selected.kind;
         if (kind === 'applications') { applicationPages(state).render(selected); return; }
         if (tab === 'logs') { renderLogs(state, selected); return; }
+        if (['deny', 'allow', 'policies'].includes(kind) && tab === 'summary') { securityPages(state).summary(selected); return; }
         if (tab === 'certificates' && kind === 'applications') {
             resourceList(state, 'certificates', state.inventory.resources.certificates.filter(function (r) { return r.id === String(selected.cert_id); })); return;
         }
@@ -534,17 +535,9 @@
                 show(state, properties([['語意防護', r.semantics], ['驗證', r.challenge_is_enabled], ['動態防護', r.chaos_is_enabled], ['頻率限制', r.acl_enabled],
                     ['語意防護設定', r.protection && r.protection.semantics], ['頻率限制設定', r.protection && r.protection.acl]], '防護設定')); return;
             }
-            if (tab === 'conditions') {
-                const values = []; (r.pattern || []).forEach(function (group, index) { group.forEach(function (item) {
-                    values.push({ group: index + 1, field: item.k, operator: item.op, subkey: item.sub_k, value: readable(item.v) });
-                }); });
-                show(state, grid(values, [{ text: '條件組', dataIndex: 'group', width: 85 }, { text: '匹配項', dataIndex: 'field', flex: 1 },
-                    { text: '算子', dataIndex: 'operator', width: 100 }, { text: '子鍵', dataIndex: 'subkey', flex: 1 }, { text: '值', dataIndex: 'value', flex: 2 }], null,
-                '保留上游條件組及順序；內建規則可能沒有自訂匹配條件。')); return;
-            }
             if (tab === 'scope') {
-                show(state, properties([['規則層級（上游值）', r.level], ['順序', r.order], ['條件取反', r.negate], ['匹配條件', r.pattern],
-                    ['範圍說明', '生效範圍取決於匹配條件及規則順序。此接口未提供可獨立核對的應用引用清單。']])); return;
+                show(state, properties([['規則層級（上游值）', r.level], ['順序', r.order], ['條件取反', r.negate],
+                    ['範圍說明', '生效範圍取決於概要中的匹配規則及規則順序。此接口未提供可獨立核對的應用引用清單。']])); return;
             }
             if (tab === 'members') {
                 show(state, grid((r.ips || []).map(function (ip, index) { return { id: index, ip: ip }; }), [{ text: 'IP / CIDR', dataIndex: 'ip', flex: 1 }], null,
@@ -920,7 +913,7 @@
             show: function (config) { show(state, config); }, note: function (text) { note(state, text); },
             choose: function (r) { choose(state, r.kind, r.id); }, loadInventory: function () { loadInventory(state); },
             showList: function (action) { choose(state, 'lists', null, action === 0 ? 'allow' : 'deny'); },
-            edited: function (id, action) { if (state.selection.id === String(id)) { state.selection = { kind: action === 0 ? 'allow' : 'deny', id: String(id) }; state.tab = 'summary'; } loadInventory(state); }
+            edited: function (id, action) { if (state.selection.id === String(id)) { state.selection = { kind: action === 0 ? 'allow' : action === 1 ? 'deny' : 'policies', id: String(id) }; state.tab = 'summary'; } loadInventory(state); }
         });
         return state.securityPages;
     }
@@ -931,7 +924,7 @@
         if (selection.kind === 'applications') return [['basic', '基本資訊', 'fa-list-alt'], ['forwarding', '轉發規則', 'fa-exchange'], ['advanced', '高級配置', 'fa-cogs'], ['routes', '應用路由', 'fa-sitemap'], ['tamper', '網頁防篡改', 'fa-shield']];
         if (selection.kind === 'certificates') return [['summary', '概要', 'fa-list-alt'], ['info', '憑證資訊', 'fa-certificate'], ['applications', '引用應用', 'fa-globe']];
         if (selection.kind === 'ip-groups') return [['summary', '概要', 'fa-list-alt'], ['members', 'IP 成員', 'fa-list'], ['references', '引用關係', 'fa-link']];
-        return [['summary', '概要', 'fa-list-alt'], ['conditions', '匹配條件', 'fa-filter'], ['scope', '作用範圍', 'fa-bullseye'], ['logs', '命中日誌', 'fa-search']];
+        return [['summary', '概要', 'fa-list-alt'], ['scope', '作用範圍', 'fa-bullseye'], ['logs', '命中日誌', 'fa-search']];
     }
     function renderSelection(state) {
         if (!state.active || !alive(state.page)) return;
@@ -946,9 +939,9 @@
         const resource = selected.id && findResource(state);
         title.setText(enc('SafeLine WAF' + (selected.kind !== 'root' ? ' / ' + (selected.kind === 'lists' ? '黑白名單' : type(selected.kind).name) : '') + (resource ? ' / ' + resource.name : '')));
         const edit = state.page.down('#safeline-resource-edit'), mode = state.page.down('#safeline-resource-mode'), toggle = state.page.down('#safeline-resource-switch');
-        if (edit) { edit.setVisible(!!resource && (selected.kind !== 'applications' || state.tab === 'basic')); edit.setDisabled(!resource || !!resource.stale || (resource.builtin || resource.cloud_id > 0) && ['deny', 'allow', 'policies'].includes(selected.kind) || selected.kind === 'policies'); }
+        if (edit) { edit.setVisible(!!resource && !['deny', 'allow', 'policies'].includes(selected.kind) && (selected.kind !== 'applications' || state.tab === 'basic')); edit.setDisabled(!resource || !!resource.stale); }
         if (mode) { mode.setVisible(!!resource && selected.kind === 'applications'); mode.setDisabled(!resource || !!resource.stale); }
-        if (toggle) { toggle.setVisible(!!resource && ['deny', 'allow', 'policies'].includes(selected.kind)); toggle.setDisabled(!resource || !!resource.stale); }
+        if (toggle) toggle.setVisible(false);
         if (!state.connection) { note(state, '正在讀取連線設定…'); return; }
         if (selected.kind === 'root' && state.tab === 'connection') { renderConnection(state); return; }
         if (!state.connection.configured) { note(state, '尚未設定 SafeLine。請在「連線資訊」中填寫管理地址及 API Token。'); return; }
@@ -1010,7 +1003,8 @@
             if (!data.resources || !types.every(function (t) { return Array.isArray(data.resources[t.id]); }) || !data.errors || !data.truncated || !Array.isArray(data.policies)) {
                 status(state, '資源資料格式不符'); return;
             }
-            if (state.origin && state.origin !== data.origin_id) { state.selection = { kind: 'root' }; state.tab = null; state.inventory = null; }
+            const originChanged = state.origin && state.origin !== data.origin_id;
+            if (originChanged) { state.selection = { kind: 'root' }; state.tab = null; state.inventory = null; }
             types.forEach(function (t) {
                 if (data.errors[t.id] && state.inventory) data.resources[t.id] = state.inventory.resources[t.id].map(function (row) {
                     return Object.assign({}, row, { stale: true, observed_at: row.observed_at || state.lastInventory });
@@ -1020,6 +1014,8 @@
             state.origin = data.origin_id; state.inventory = data; state.lastInventory = data.updated_at;
             renderTree(state);
             status(state, (Object.keys(data.errors).length ? '部分資源無法更新 · ' : '已更新 · ') + date(data.updated_at));
+            const summary = state.page && state.page.down('#safeline-policy-summary');
+            if (!originChanged && alive(summary) && summary.hasDraft()) return;
             if (state.selection.kind === 'root' && state.tab === 'overview') renderOverview(state);
             else if (!alive(state.editor) && state.selection.kind !== 'lists' && !(state.selection.kind === 'root' && ['connection', 'events', 'challenge', 'cc-rate', 'cc-waiting'].includes(state.tab)) && !(state.selection.kind==='applications'&&state.tab==='advanced')) renderSelection(state);
         }, function (code) {
@@ -1057,6 +1053,8 @@
     function refresh(state) {
         if (!state.active || !user(state)) return;
         if (!state.connection) { loadConnection(state); return; }
+        const summary = state.page && state.page.down('#safeline-policy-summary');
+        if (alive(summary) && summary.hasDraft()) { loadInventory(state); loadHealth(state, true); return; }
         const advanced=state.page&&state.page.down('#safeline-advanced');if(alive(advanced)&&advanced.reloadAdvanced)advanced.reloadAdvanced();
         if (state.connection.configured) { loadInventory(state); loadHealth(state, true); }
         renderSelection(state);

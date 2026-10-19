@@ -403,7 +403,7 @@ class SecurityEditor:
         raw["rules"] = values
         if section == "subscribe":
             raw["catalog"] = bounded(await client.get("/api/open/cloud/policies"))
-        if section in {"create", "edit"}:
+        if section in {"create", "edit", "summary"}:
             async def optional(path):
                 try: return await client.get(path)
                 except SafeLineError: return None
@@ -411,7 +411,7 @@ class SecurityEditor:
             raw["groups"] = [take(v, ("id", "comment")) for v in bounded(groups, "nodes")] if isinstance(groups, dict) and isinstance(groups.get("nodes"), list) else []
             raw["sites"] = [take(v, ("id", "comment", "title", "server_names")) for v in bounded(sites, "data")] if isinstance(sites, dict) and isinstance(sites.get("data"), list) else []
             raw["ja4"] = [take(ja4, ("id", "name"))] if isinstance(ja4, dict) and type(ja4.get("id")) is int and ja4["id"] > 0 else []
-        if section == "edit":
+        if section in {"edit", "summary", "switch", "delete"}:
             value = await client.get("/api/open/policy/detail", {"id": params["id"]})
             if not isinstance(value, dict) or value.get("id") != params["id"]:
                 raise SafeLineError("safeline_resource_not_found", 404)
@@ -428,10 +428,15 @@ class SecurityEditor:
         result = {"values": {}, "rules": rules, "locked": [], "capabilities": caps}
         if section == "subscribe":
             result["catalog"] = [take(row, ("id", "policy_name", "org_name", "black_rule", "white_rule", "compatible", "tags", "added", "updated_at")) for row in raw["catalog"]]
-        if section in {"create", "edit"}:
+        if section in {"create", "edit", "summary"}:
             result["options"] = {"targets": [{"id": key, "name": label, "operators": [{"id": op, "name": OPERATORS[op]} for op in ops.split()]} for key, (label, ops) in TARGETS.items()],
                                  "groups": raw["groups"], "sites": raw["sites"], "ja4": raw["ja4"], "geo": GEO}
-        if section == "edit":
+        if section in {"switch", "delete"}:
+            original = raw["rule"]
+            result["values"] = take(original, ("id", "action", "name", "is_enabled", "builtin", "cloud_id", "black_rule", "white_rule"))
+            result["capabilities"].update(can_switch=original.get("action") in {0, 1, 999} and type(original.get("is_enabled")) is bool,
+                can_delete=not original.get("builtin") and original.get("action") in {0, 1, 999})
+        if section in {"edit", "summary"}:
             original = raw["rule"]
             result["values"] = take(original, ("id", "action", "name", "is_enabled", "log", "pattern"))
             try:
@@ -447,6 +452,13 @@ class SecurityEditor:
                 result["values"].pop("pattern", None); result["locked"].append("pattern")
             if original.get("builtin") or original.get("cloud_id", 0) or original.get("action") not in {0, 1}:
                 result["locked"] = list(result["values"])
+            if section == "summary":
+                result["values"].update(take(original, ("order", "builtin", "cloud_id", "negate", "created_at", "updated_at", "req_count", "pass_count", "black_rule", "white_rule")))
+                result["preview"] = policy(original)["pattern"]
+                custom = not original.get("builtin") and not original.get("cloud_id") and original.get("action") in {0, 1}
+                result["capabilities"].update(can_edit=custom, can_edit_pattern=custom and "pattern" not in result["locked"],
+                    can_switch=original.get("action") in {0, 1, 999} and type(original.get("is_enabled")) is bool,
+                    can_delete=not original.get("builtin") and original.get("action") in {0, 1, 999})
         return safe(result, token)
 
     async def load(self, area, section, params):
@@ -528,6 +540,43 @@ class SecurityEditor:
                 current = {r["id"]: r for r in bounded(await client.get("/api/open/site/0/acl"))}
                 return set(current) == set(originals) and all(all(current[key].get(k) == v for k, v in patch.items()) for key, patch in expected.items())
             return [("PUT", "/api/open/site/0/acl", {"rules": list(merged.values())})], verify
+        if section == "switch":
+            original = raw["rule"]
+            require(original.get("action") in {0, 1, 999} and type(original.get("is_enabled")) is bool)
+            require(set(changes) == {"is_enabled"} and type(changes["is_enabled"]) is bool)
+            async def verify(_):
+                value = await client.get("/api/open/policy/detail", {"id": params["id"]})
+                return isinstance(value, dict) and value.get("id") == params["id"] and value.get("is_enabled") is changes["is_enabled"]
+            return [("PUT", "/api/open/policy/switch", {"id": params["id"], **changes})], verify
+        if section == "delete":
+            original = raw["rule"]
+            require(not original.get("builtin") and original.get("action") in {0, 1, 999})
+            require(set(changes) == {"confirm_name"} and type(changes["confirm_name"]) is str and changes["confirm_name"] == original.get("name"))
+            async def verify(_):
+                values, total, limited = await self.service.policies(client)
+                return not limited and len(values) == total and not any(r["id"] == params["id"] for r in values)
+            return [("DELETE", "/api/open/policy", {"id": params["id"]})], verify
+        if section == "summary":
+            original = raw["rule"]
+            require(not original.get("builtin") and not original.get("cloud_id") and original.get("action") in {0, 1})
+            require(set(changes) <= {"name", "action", "order", "pattern"})
+            metadata = {k: v for k, v in changes.items() if k != "order"}
+            writes, check_metadata = self.plan(client, raw, area, "edit", params, metadata) if metadata else ([], None)
+            orders = []
+            if "order" in changes:
+                action = changes.get("action", original["action"])
+                other = sorted((r for r in raw["rules"] if r["id"] != params["id"] and r.get("action") == action and not r.get("builtin") and not r.get("cloud_id")), key=lambda r: r.get("order", 0))
+                position = integer(changes["order"], 1, len(other) + 1)
+                identifiers = [r["id"] for r in other]; identifiers.insert(position - 1, params["id"])
+                orders = [{"id": key, "order": i + 1} for i, key in enumerate(identifiers)]
+                writes.append(("PUT", "/api/open/policy/orders", {"orders": orders}))
+            require(bool(writes))
+            async def verify(result):
+                if check_metadata and not await check_metadata(result): return False
+                if not orders: return True
+                values, total, limited = await self.service.policies(client); current = {r["id"]: r for r in values}
+                return not limited and len(values) == total and all(current.get(r["id"], {}).get("order") == r["order"] for r in orders)
+            return writes, verify
         if section == "order":
             require(set(changes) == {"ids"} and isinstance(changes["ids"], list))
             action = params["action"]; originals = [r for r in raw["rules"] if r.get("action") == action and not r.get("builtin") and not r.get("cloud_id")]
