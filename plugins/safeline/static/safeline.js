@@ -509,7 +509,7 @@
         const tab = state.tab, kind = selected.kind;
         if (kind === 'applications') { applicationPages(state).render(selected); return; }
         if (tab === 'logs') { renderLogs(state, selected); return; }
-        if (['deny', 'allow', 'policies'].includes(kind) && tab === 'summary') { securityPages(state).summary(selected); return; }
+        if (['deny', 'allow', 'policies'].includes(kind) && ['summary', 'conditions'].includes(tab)) { securityPages(state).summary(selected, tab); return; }
         if (tab === 'certificates' && kind === 'applications') {
             resourceList(state, 'certificates', state.inventory.resources.certificates.filter(function (r) { return r.id === String(selected.cert_id); })); return;
         }
@@ -534,10 +534,6 @@
             if (tab === 'protection') {
                 show(state, properties([['語意防護', r.semantics], ['驗證', r.challenge_is_enabled], ['動態防護', r.chaos_is_enabled], ['頻率限制', r.acl_enabled],
                     ['語意防護設定', r.protection && r.protection.semantics], ['頻率限制設定', r.protection && r.protection.acl]], '防護設定')); return;
-            }
-            if (tab === 'scope') {
-                show(state, properties([['規則層級（上游值）', r.level], ['順序', r.order], ['條件取反', r.negate],
-                    ['範圍說明', '生效範圍取決於概要中的匹配規則及規則順序。此接口未提供可獨立核對的應用引用清單。']])); return;
             }
             if (tab === 'members') {
                 show(state, grid((r.ips || []).map(function (ip, index) { return { id: index, ip: ip }; }), [{ text: 'IP / CIDR', dataIndex: 'ip', flex: 1 }], null,
@@ -913,7 +909,7 @@
             show: function (config) { show(state, config); }, note: function (text) { note(state, text); },
             choose: function (r) { choose(state, r.kind, r.id); }, loadInventory: function () { loadInventory(state); },
             showList: function (action) { choose(state, 'lists', null, action === 0 ? 'allow' : 'deny'); },
-            edited: function (id, action) { if (state.selection.id === String(id)) { state.selection = { kind: action === 0 ? 'allow' : action === 1 ? 'deny' : 'policies', id: String(id) }; state.tab = 'summary'; } loadInventory(state); }
+            edited: function (id, action) { if (state.selection.id === String(id)) { state.selection = { kind: action === 0 ? 'allow' : action === 1 ? 'deny' : 'policies', id: String(id) }; if (!['summary', 'conditions'].includes(state.tab)) state.tab = 'summary'; } loadInventory(state); }
         });
         return state.securityPages;
     }
@@ -924,7 +920,7 @@
         if (selection.kind === 'applications') return [['basic', '基本資訊', 'fa-list-alt'], ['forwarding', '轉發規則', 'fa-exchange'], ['advanced', '高級配置', 'fa-cogs'], ['routes', '應用路由', 'fa-sitemap'], ['tamper', '網頁防篡改', 'fa-shield']];
         if (selection.kind === 'certificates') return [['summary', '概要', 'fa-list-alt'], ['info', '憑證資訊', 'fa-certificate'], ['applications', '引用應用', 'fa-globe']];
         if (selection.kind === 'ip-groups') return [['summary', '概要', 'fa-list-alt'], ['members', 'IP 成員', 'fa-list'], ['references', '引用關係', 'fa-link']];
-        return [['summary', '概要', 'fa-list-alt'], ['scope', '作用範圍', 'fa-bullseye'], ['logs', '命中日誌', 'fa-search']];
+        return [['summary', '概要', 'fa-list-alt'], ['conditions', '匹配條件', 'fa-filter'], ['logs', '命中日誌', 'fa-search']];
     }
     function renderSelection(state) {
         if (!state.active || !alive(state.page)) return;

@@ -221,13 +221,16 @@
                 f.confirmed = function () { if (remove) ctx.showList(v.action === 0 ? 0 : 1); else refresh(); };
             });
         }
-        function summary(resource) {
+        function summary(resource, section, reload) {
+            section = section === 'conditions' ? 'conditions' : 'summary';
+            const resourceKey = resource.kind + ':' + resource.id, existing = state.page && state.page.down('#safeline-policy-summary');
+            if (!reload && alive(existing) && existing.resourceKey === resourceKey && (existing.hasDraft() || existing.section !== section)) { existing.setSection(section); return; }
             const path = '/policy-management/summary?id=' + encodeURIComponent(resource.id);
-            ctx.note('正在讀取規則概要…');
+            ctx.note(section === 'conditions' ? '正在讀取匹配條件…' : '正在讀取規則概要…');
             ctx.request(path, {}, function (data) {
                 if (!data.values || !Array.isArray(data.locked) || !data.options || data.connection_revision !== state.connection.revision) { ctx.note(ctx.message('safeline_unexpected_response')); return; }
                 const initial = copy(data.values), caps = data.capabilities, originalGroups = copy(data.values.pattern || data.preview || []);
-                let draft = copy(initial), groups = copy(originalGroups), panel, body, dirty = false, pending = false, submitted = false;
+                let draft = copy(initial), groups = copy(originalGroups), panel, body, dirty = false, pending = false, submitted = false, notice = '', conditions = section === 'conditions';
                 function differences() {
                     const changes = {};
                     ['name', 'action', 'order'].forEach(function (key) { if (!same(draft[key], initial[key])) changes[key] = draft[key]; });
@@ -235,7 +238,7 @@
                     if (caps.can_edit_pattern && !same(groups, originalGroups)) changes.pattern = copy(groups);
                     return changes;
                 }
-                function status(message) { if (alive(panel)) panel.down('#safeline-rule-status').setText(enc(message)); }
+                function status(message) { notice = message; if (alive(panel)) panel.down('#safeline-rule-status').setText(enc(message)); }
                 function mutable() { return !pending && !submitted && !resource.stale; }
                 function afterAction() { ctx.edited(resource.id, initial.action); }
                 function save() {
@@ -274,6 +277,8 @@
                 function draw() {
                     if (!alive(panel)) return;
                     dirty = !!Object.keys(differences()).length; const writable = mutable();
+                    ['enable', 'disable', 'delete'].forEach(function (key) { panel.down('#safeline-rule-' + key).setVisible(!conditions); });
+                    panel.down('#safeline-rule-add-or').setVisible(conditions);
                     panel.down('#safeline-rule-enable').setDisabled(!caps.can_switch || initial.is_enabled !== false || dirty || !writable);
                     panel.down('#safeline-rule-disable').setDisabled(!caps.can_switch || initial.is_enabled !== true || dirty || !writable);
                     panel.down('#safeline-rule-delete').setDisabled(!caps.can_delete || dirty || !writable);
@@ -283,13 +288,20 @@
                     const metadataRows = [['名稱', draft.name, true], ['類型', ({ 0: '白名單（放行）', 1: '黑名單（攔截）', 999: '在線規則庫（黑／白名單）' })[draft.action] || '其他防護規則', true],
                         ['順序序號', caps.can_edit ? draft.order : '—', true], ['規則 ID', initial.id], ['啟用', initial.is_enabled], ['記錄日誌', initial.log],
                         ['今日命中', ctx.amount(initial.req_count)], ['更新時間', ctx.date(initial.updated_at)]];
-                    const basic = rowsGrid(metadataRows.map(function (r, i) { return { id: i, name: r[0], value: r[1], editable: r[2] }; }), '基本資訊', function (row) { if (row.editable) metadata(); });
-                    basic.itemId = 'safeline-rule-metadata'; basic.tbar = [{ text: '編輯基本資訊', iconCls: 'fa fa-pencil', disabled: !caps.can_edit || !writable, handler: metadata }]; body.add(basic);
-                    body.add({ xtype: 'component', html: '<h3 style="margin:0 8px 8px;font-size:14px">匹配規則</h3><p style="margin:0 8px 12px">' + enc(ruleMeaning) + '</p>' +
+                    if (!conditions) {
+                        const basic = rowsGrid(metadataRows.map(function (r, i) { return { id: i, name: r[0], value: r[1], editable: r[2] }; }), '基本資訊', function (row) { if (row.editable) metadata(); });
+                        basic.itemId = 'safeline-rule-metadata'; basic.tbar = [{ text: '編輯基本資訊', iconCls: 'fa fa-pencil', disabled: !caps.can_edit || !writable, handler: metadata }]; body.add(basic);
+                    }
+                    body.add({ xtype: 'component', html: '<h3 style="margin:0 8px 8px;font-size:14px">' + (conditions ? '匹配條件' : '匹配條件預覽') + '</h3><p style="margin:0 8px 12px">' + enc(ruleMeaning) + '</p>' +
                         (initial.negate ? '<p style="margin:0 8px 12px">此規則已啟用條件取反：以上匹配結果將取反後判斷。</p>' : '') });
                     if (!caps.can_edit_pattern) body.add({ xtype: 'component', html: '<p style="margin:0 8px 12px">' + enc(initial.builtin || initial.cloud_id > 0 ? '此規則的匹配內容由內建功能或在線規則庫管理，僅供檢視。' : '匹配規則含敏感或不支援的內容，保留現有設定。') + '</p>' });
                     if (!groups.length) body.add({ xtype: 'component', html: '<p style="margin:8px">上游未提供可展示的匹配規則。</p>' });
-                    groups.forEach(function (group, index) {
+                    if (!conditions) body.add({ xtype: 'component', itemId: 'safeline-rule-preview', html: '<div style="margin:0 8px 14px;line-height:1.8;overflow-wrap:anywhere">' + groups.map(function (group, index) {
+                        return (index ? '<div style="font-weight:600;margin:8px 0">或者（OR）</div>' : '') + group.map(function (rule, i) {
+                            return '<div><span style="opacity:.65">' + enc((i ? '並且 ' : '') + ruleName(rule)) + '</span>　' + enc(ruleValues(rule, data.options)).replace(/\n/g, ', ') + '</div>';
+                        }).join('');
+                    }).join('') + '</div>' });
+                    if (conditions) groups.forEach(function (group, index) {
                         if (index) body.add({ xtype: 'component', html: '<p style="margin:0 8px 12px;font-weight:600">或者（OR）</p>' });
                         const rows = group.map(function (rule, i) { return { id: i, name: (i ? '並且 ' : '') + ruleName(rule), value: ruleValues(rule, data.options) }; });
                         const grid = rowsGrid(rows, '條件組 ' + (index + 1) + '（AND）', function (row) {
@@ -308,7 +320,7 @@
                         grid.listeners.selectionchange = function (model, records) { const button = panel.down('#safeline-rule-delete-conditions-' + index); if (button) button.setDisabled(!allowed || !records.length || records.length >= group.length); };
                         body.add(grid);
                     });
-                    status(dirty ? '尚未儲存；按「儲存」後生效。' : '預設只讀；雙擊條件或基本資訊列編輯。');
+                    status(submitted && notice ? notice : dirty ? '尚未儲存；按「儲存」後生效。' : conditions ? '預設只讀；雙擊條件列編輯。' : '預設只讀；雙擊基本資訊列編輯。');
                 }
                 ctx.show({ xtype: 'panel', itemId: 'safeline-policy-summary', border: false, layout: 'border',
                     items: [{ xtype: 'panel', region: 'north', border: false, tbar: { enableOverflow: true, items: [
@@ -317,10 +329,11 @@
                         { text: '刪除', itemId: 'safeline-rule-delete', iconCls: 'fa fa-trash', handler: function () { if (!dirty && mutable()) ruleAction(resource, 'delete', afterAction); } }, '-',
                         { text: '添加 OR 條件組', itemId: 'safeline-rule-add-or', handler: function () { if (caps.can_edit_pattern && mutable() && groups.length < 64) editCondition(null, data, function (v) { groups.push([v]); draw(); }, panel, '添加 OR 條件組'); } }, '->',
                         { text: '儲存', itemId: 'safeline-rule-save', iconCls: 'fa fa-save', disabled: true, handler: save },
-                        { text: '取消變更', itemId: 'safeline-rule-reset', disabled: true, handler: function () { if (!pending) summary(resource); } }] } },
+                        { text: '取消變更', itemId: 'safeline-rule-reset', disabled: true, handler: function () { if (!pending) summary(resource, panel.section, true); } }] } },
                         { xtype: 'panel', itemId: 'safeline-rule-body', region: 'center', border: false, scrollable: true, layout: 'anchor', defaults: { anchor: '100%' } }],
                     bbar: [{ xtype: 'tbtext', itemId: 'safeline-rule-status', text: '' }] });
-                panel = state.page.down('#safeline-policy-summary'); body = panel.down('#safeline-rule-body'); panel.hasDraft = function () { return dirty || pending || submitted; }; draw();
+                panel = state.page.down('#safeline-policy-summary'); body = panel.down('#safeline-rule-body'); panel.hasDraft = function () { return dirty || pending || submitted; };
+                panel.resourceKey = resourceKey; panel.section = section; panel.setSection = function (value) { panel.section = value; conditions = value === 'conditions'; draw(); }; draw();
             }, function (code) { ctx.note(ctx.message(code)); }, true);
         }
 
