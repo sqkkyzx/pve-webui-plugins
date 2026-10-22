@@ -1398,6 +1398,8 @@
         panel.down('#pve-komodo-guest-options-refresh').setDisabled(!!blocked);
         panel.down('#pve-komodo-guest-options-edit').setDisabled(!!blocked || !data || !data.can_write || !row || !row.get('available'));
         panel.down('#pve-komodo-guest-options-rotate').setDisabled(!!blocked || !data || !data.can_write || !data.can_rotate);
+        panel.down('#pve-komodo-guest-options-error').setDisabled(!!blocked || !data || !data.error);
+        panel.down('#pve-komodo-guest-options-public-key').setDisabled(!!blocked || !data || !data.can_write || !data.attempted_public_key);
     }
     function optionValue(value, kind) {
         if (kind === 'boolean') return value === true ? '是' : value === false ? '否' : '-';
@@ -1441,6 +1443,8 @@
         const confirmation = panel._pveKomodoOptionsConfirmation;
         panel._pveKomodoOptionsConfirmation = null;
         if (confirmation && alive(confirmation.dialog)) confirmation.dialog.destroy();
+        if (alive(panel._pveKomodoOptionsErrorDetails)) panel._pveKomodoOptionsErrorDetails.destroy();
+        panel._pveKomodoOptionsErrorDetails = null;
         closeOptionEditor(panel);
     }
     function optionsError(response, fallback) {
@@ -1457,6 +1461,69 @@
         if (response && response.status === 409) return '关联或服务器配置已变化，请刷新后重新确认';
         if (response && response.status === 503) return 'PVE 会话验证或集成服务暂不可用';
         return fallback;
+    }
+    function showOptionError(panel) {
+        const data = panel._pveKomodoOptionsData, error = data && data.error;
+        if (!alive(panel) || !error || typeof error.error !== 'string' || !Array.isArray(error.trace)) return;
+        const trace = error.trace.map(function (item, index) {
+            return '<p><strong>' + (index + 1) + '：</strong>' + text(item) + '</p>';
+        }).join('');
+        const html = '<p class="pve-komodo-option-error-message"><strong>错误：</strong>' + text(error.error) + '</p>' +
+            (trace ? '<p class="pve-komodo-option-error-trace-title"><strong>错误跟踪：</strong></p>' + trace : '');
+        if (alive(panel._pveKomodoOptionsErrorDetails)) panel._pveKomodoOptionsErrorDetails.destroy();
+        panel._pveKomodoOptionsErrorDetails = Ext.create('Ext.window.Window', {
+            title: '错误详情', width: 680, height: 520, modal: true, closeAction: 'destroy',
+            layout: 'fit', items: [{ xtype: 'component', padding: 16, scrollable: true, html: html,
+                style: { 'white-space': 'pre-wrap', 'overflow-wrap': 'anywhere' } }],
+        });
+        panel._pveKomodoOptionsErrorDetails.show();
+    }
+    function confirmAttemptedPublicKey(panel) {
+        const data = panel._pveKomodoOptionsData;
+        if (!alive(panel) || !panel._pveKomodoOptionsActive || !data || !data.can_write ||
+            !data.attempted_public_key || optionBusy() || panel._pveKomodoOptionsConfirmation) return;
+        const name = typeof data.server_name === 'string' ? data.server_name : '';
+        if (!name) return;
+        const requestId = uuid();
+        if (!requestId) { optionStatus(panel, '浏览器无法生成安全请求标识，本次未提交'); return; }
+        const payload = { action: 'public_key', server_id: data.server_id, binding_revision: data.binding_revision,
+            base_version: data.version, request_id: requestId, public_key: data.attempted_public_key };
+        const generation = panel._pveKomodoOptionsGeneration;
+        let dialog;
+        const input = { xtype: 'textfield', itemId: 'pve-komodo-public-key-confirm-name', fieldLabel: '服务器名称',
+            anchor: '100%', listeners: { change: function (field) {
+                const matches = field.getValue() === name;
+                const confirm = dialog && dialog.down('#pve-komodo-public-key-confirm');
+                if (confirm) confirm.setDisabled(!matches);
+                const error = dialog && dialog.down('#pve-komodo-public-key-confirm-error');
+                if (error) error.update(field.getValue() === '' || matches ? '' : '输入内容不匹配');
+            } } };
+        dialog = Ext.create('Ext.window.Window', {
+            title: '确认公钥', width: 620, modal: true, closeAction: 'destroy', bodyPadding: 16,
+            layout: 'anchor', defaults: { anchor: '100%' },
+            items: [{ xtype: 'component', html: '<p>公钥：</p><p style="overflow-wrap:anywhere">' + text(data.attempted_public_key) + '</p>' },
+                { xtype: 'component', html: '<p>请在下方输入 <strong>' + text(name) + '</strong> 以确认此操作。</p>' },
+                input, { xtype: 'component', itemId: 'pve-komodo-public-key-confirm-error', html: '' },
+                { xtype: 'component', html: '<p>提示：状态更新可能需要稍等片刻。</p>' }],
+            buttons: [{ text: '确认', itemId: 'pve-komodo-public-key-confirm', disabled: true, handler: function () {
+                const field = dialog.down('#pve-komodo-public-key-confirm-name');
+                if (panel._pveKomodoOptionsConfirmation && panel._pveKomodoOptionsConfirmation.dialog === dialog &&
+                    field && field.getValue() === name) {
+                    panel._pveKomodoOptionsConfirmation = null;
+                    dialog.destroy();
+                    if (alive(panel) && panel._pveKomodoOptionsActive && generation === panel._pveKomodoOptionsGeneration &&
+                        panel._pveKomodoOptionsData === data && !optionBusy()) submitOptions(panel, payload, '已确认服务器公钥');
+                }
+            } }, { text: '取消', handler: function () { if (alive(dialog)) dialog.destroy(); } }],
+            listeners: { beforedestroy: function () {
+                if (panel._pveKomodoOptionsConfirmation && panel._pveKomodoOptionsConfirmation.dialog === dialog) {
+                    panel._pveKomodoOptionsConfirmation = null; optionControls(panel);
+                }
+            } },
+        });
+        panel._pveKomodoOptionsConfirmation = { dialog: dialog };
+        dialog.show();
+        optionControls(panel);
     }
     function loadOptions(panel) {
         if (!alive(panel) || !panel._pveKomodoOptionsActive) return;
@@ -1483,6 +1550,12 @@
                     !Number.isSafeInteger(data.binding_revision) || data.binding_revision < 0 ||
                     !data.config || typeof data.config !== 'object' || Array.isArray(data.config) ||
                     typeof data.can_write !== 'boolean' || typeof data.can_rotate !== 'boolean' ||
+                    data.attempted_public_key !== null && (typeof data.attempted_public_key !== 'string' || data.attempted_public_key.length > 8192 || /[\r\n]/.test(data.attempted_public_key)) ||
+                    data.error !== null && (!data.error || typeof data.error !== 'object' || Array.isArray(data.error) ||
+                        typeof data.error.error !== 'string' || data.error.error.length > 8192 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(data.error.error) || !Array.isArray(data.error.trace) ||
+                        data.error.trace.length > 128 || !data.error.trace.every(function (item) {
+                            return typeof item === 'string' && item.length <= 8192 && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(item);
+                        })) ||
                     typeof data.csrf_token !== 'string' || !data.csrf_token || data.csrf_token.length > 4096 || /[\r\n]/.test(data.csrf_token)) {
                     throw new Error('invalid-options');
                 }
@@ -1501,7 +1574,7 @@
             if (!completed) panel._pveKomodoOptionsRequest = request;
         } catch (error) { complete(null, false, null); }
     }
-    function submitOptions(panel, payload) {
+    function submitOptions(panel, payload, successMessage) {
         const path = panel.pveKomodoOptionsPath;
         const state = { pending: true, path: path };
         guestOptionsWrite = state;
@@ -1520,7 +1593,7 @@
                 const result = response && JSON.parse(response.responseText);
                 if (success && result && result.status === 'completed' && result.ok === true) {
                     accepted = true;
-                    message = payload.action === 'rotate_keys' ? '密钥轮换已完成' : '配置已保存';
+                    message = successMessage || (payload.action === 'rotate_keys' ? '密钥轮换已完成' : '配置已保存');
                 } else if (result && result.status === 'failed') message = '修改失败，请刷新配置并核对 Komodo 的操作记录';
                 else if (response && [401, 403, 404, 409, 422].includes(response.status)) message = optionsError(response,
                     '配置未通过校验，本次未保存，请刷新后核对');
@@ -1732,6 +1805,10 @@
                 editOption(panel, grid.getSelectionModel().getSelection()[0]);
             } }, { text: '轮换密钥', itemId: 'pve-komodo-guest-options-rotate', disabled: true,
                 handler: function (button) { confirmOptions(optionOwner(button), 'rotate_keys'); } },
+            { text: '错误', itemId: 'pve-komodo-guest-options-error', disabled: true, iconCls: 'fa fa-exclamation-triangle',
+                handler: function (button) { showOptionError(optionOwner(button)); } },
+            { text: '无效公钥', itemId: 'pve-komodo-guest-options-public-key', disabled: true, iconCls: 'fa fa-ban',
+                handler: function (button) { confirmAttemptedPublicKey(optionOwner(button)); } },
             { text: '刷新', itemId: 'pve-komodo-guest-options-refresh', handler: function (button) { loadOptions(optionOwner(button)); } }],
             bbar: [{ xtype: 'tbtext', itemId: 'pve-komodo-guest-options-status', text: '尚未读取关联服务器配置' }],
             items: [{ xtype: 'gridpanel', itemId: 'pve-komodo-guest-options-grid', cls: 'pve-komodo-stack-config-grid pve-komodo-guest-options-grid',
@@ -3247,12 +3324,30 @@
         ['stop', '停止', '停止应用栈容器，会中断相关服务。'],
         ['destroy', '销毁', '停止并移除应用栈容器与网络；容器可写层中的数据会被删除，默认不删除存储卷。'],
     ];
+    const stackModeChoices = [
+        { mode: 'ui', label: '界面编辑' },
+        { mode: 'host', label: '服务器文件' },
+        { mode: 'git', label: 'Git 代码仓库' },
+    ];
+    const stackModeSections = {
+        ui: [['compose', 'Compose 文件', [['file_contents', 'Compose 文件原文', 'code']]]],
+        host: [['files', '文件', [['run_directory', '运行目录', 'string'], ['file_paths', '文件路径', 'list']]]],
+        git: [
+            ['source', '来源', [
+                ['linked_repo', '关联代码仓库', 'repos'], ['git_provider', 'Git 提供商', 'string'], ['git_account', 'Git 账户', 'string'],
+                ['repo', '代码仓库', 'string'], ['branch', '分支', 'string'], ['commit', '提交哈希', 'string'],
+                ['clone_path', '克隆路径', 'string'], ['git_https', '使用 HTTPS', 'boolean'], ['reclone', '重新克隆', 'boolean'],
+            ]],
+            ['files', '文件', [['run_directory', '运行目录', 'string'], ['file_paths', '文件路径', 'list']]],
+            ['webhook', 'Webhook', [['webhook_enabled', '启用 Webhook', 'boolean'], ['webhook_force_deploy', '强制部署', 'boolean'],
+                ['webhook_secret', 'Webhook 密钥', 'secret']]],
+        ],
+    };
     // Match the requested configuration sections. Unlisted backend fields stay
     // untouched because every edit submits only the selected field.
     const stackConfigSections = [
         ['general', '常规', [
             ['server', '服务器', [['server_id', '服务器', 'servers']]],
-            ['files', '文件', [['run_directory', '运行目录', 'string'], ['file_paths', '文件路径', 'list']]],
             ['environment', '环境变量', [['environment', '环境变量', 'code']]],
             ['config-files', '配置文件', [['config_files', '配置文件', 'configfiles']]],
             ['auto-update', '自动更新', [
@@ -3277,10 +3372,33 @@
             ['destroy', '销毁', [['destroy_before_deploy', '部署前销毁', 'boolean']]],
         ]],
     ];
+    function stackMode(data) {
+        if (data && ['host', 'git', 'ui', 'none'].includes(data.source_mode)) return data.source_mode;
+        const config = data && data.config || {};
+        if (config.files_on_host === true) return 'host';
+        if (config.linked_repo || config.repo) return 'git';
+        if (config.file_contents) return 'ui';
+        return 'none';
+    }
+    function stackConfigSectionsForMode(mode) {
+        if (mode === 'none') return [[stackConfigSections[0][0], stackConfigSections[0][1], [stackConfigSections[0][2][0]]]];
+        return stackConfigSections.map(function (group, index) {
+            if (index !== 0) return group;
+            const sections = group[2], server = sections[0], source = stackModeSections[mode] || [];
+            const byId = Object.create(null);
+            source.concat(sections.slice(1)).forEach(function (section) { byId[section[0]] = section; });
+            const order = mode === 'ui' ? ['compose', 'environment', 'auto-update', 'links'] :
+                mode === 'host' ? ['files', 'environment', 'config-files', 'auto-update', 'links'] :
+                    ['source', 'files', 'environment', 'config-files', 'auto-update', 'links', 'webhook'];
+            return [group[0], group[1], [server].concat(order.map(function (id) { return byId[id]; }).filter(Boolean))];
+        });
+    }
     function stackSectionDescription(section, data) {
         const swarm = !!data.config.swarm_id, deploy = swarm ? 'docker stack deploy' : 'docker compose up';
         const descriptions = {
             server: '选择用于部署的服务器。',
+            compose: '在此编辑应用栈的 Compose 文件。',
+            source: '选择 Git 仓库来源以及克隆设置。',
             files: '设置运行 compose up 命令时的工作目录；添加通过 docker compose -f 使用的文件。文件路径相对于运行目录，留空时使用 compose.yaml。',
             environment: '将这些变量传入 docker compose 命令。',
             'config-files': '添加应用栈关联的其他配置文件，并在界面中编辑。路径相对于运行目录。',
@@ -3295,6 +3413,7 @@
             pull: swarm ? '登录镜像仓库以访问私有镜像。' : '登录镜像仓库以访问私有镜像；重新部署应用栈前运行 docker compose pull。也可在 Compose 文件中设置 pull_policy。',
             build: '重新部署应用栈前运行 docker compose build。也可将 --build 添加为额外参数。',
             destroy: '重新部署应用栈前运行 ' + (swarm ? 'docker stack rm' : 'docker compose down') + '。',
+            webhook: '配置 Git 仓库向 Komodo 发送 Webhook 时的行为。',
         };
         return descriptions[section] || '';
     }
@@ -3339,6 +3458,8 @@
                 name === 'edit-file' && !(tab._pveKomodoFile && tab._pveKomodoFile.editable && !tab._pveKomodoFile.redacted) ||
                 name === 'new-terminal' && !(tab._pveKomodoTerminalServices && tab._pveKomodoTerminalServices.services.some(function (service) { return service.can_open; })));
         });
+        const modeSelector = tab.down('#pve-komodo-stack-mode');
+        if (alive(modeSelector)) modeSelector.setDisabled(busy || !data || !data.can_write || !stackUser(page));
     }
     function resetStackTerminal(tab) {
         tab._pveKomodoTerminalAttempt = (tab._pveKomodoTerminalAttempt || 0) + 1;
@@ -3491,6 +3612,22 @@
             (kind === 'file' && data.files.some(function (file) { return file.path === changes.file_path && typeof file.contents !== 'string'; }) ?
                 '原文件未能读取；保存将初始化或覆盖该路径文件，原内容尚未确认。' : ''),
         Object.assign({ action: kind, server_id: data.server_id, base_version: data.version }, changes));
+    }
+    function setStackMode(page, tab, nextMode) {
+        const data = page._pveKomodoStackData, selector = tab.down('#pve-komodo-stack-mode');
+        if (!data || !alive(selector) || !data.can_write || !['ui', 'host', 'git'].includes(nextMode)) return;
+        const currentMode = stackMode(data);
+        tab._pveKomodoStackModeRendering = true;
+        selector.setValue(currentMode === 'none' ? null : currentMode);
+        tab._pveKomodoStackModeRendering = false;
+        if (nextMode === currentMode) return;
+        let config;
+        if (nextMode === 'host') config = { files_on_host: true };
+        else if (nextMode === 'git') config = { files_on_host: false,
+            repo: data.config.repo || 'namespace/repo' };
+        else config = { files_on_host: false, linked_repo: '', repo: '',
+            file_contents: data.config.file_contents || '## Add your compose file here\nservices:\n  hello_world:\n    image: hello-world\n    # networks:\n    #   - default\n    # ports:\n    #   - 3000:3000\n    # volumes:\n    #   - data:/data\n\n# networks:\n#   default: {}\n\n# volumes:\n#   data:\n' };
+        saveStack(page, 'config', { config: config });
     }
     function stackFieldAvailable(value, kind) {
         return kind === 'boolean' ? typeof value === 'boolean' : ['envfiles', 'configfiles', 'list', 'service-list', 'command-list'].includes(kind) ? Array.isArray(value) : typeof value === 'string';
@@ -3881,8 +4018,14 @@
     function renderStackTab(tab, data) {
         const page = stackRoot(tab), kind = tab.pveKomodoStackTab;
         if (kind === 'config') {
-            const rows = [];
-            stackConfigSections.forEach(function (group) {
+            const mode = stackMode(data), selector = tab.down('#pve-komodo-stack-mode');
+            if (alive(selector)) {
+                tab._pveKomodoStackModeRendering = true;
+                selector.setValue(mode === 'none' ? null : mode);
+                tab._pveKomodoStackModeRendering = false;
+            }
+            const rows = [], sections = stackConfigSectionsForMode(mode);
+            sections.forEach(function (group) {
                 rows.push({ key: 'heading-' + group[0], label: group[1], kind: 'heading', heading: 'major', available: false });
                 group[2].forEach(function (section) {
                     rows.push({ key: 'heading-' + section[0], label: section[1], kind: 'heading', heading: 'minor',
@@ -3931,7 +4074,15 @@
                 }, deactivate: cancelStackTab, beforedestroy: cancelStackTab,
             } };
         if (kind === 'config') {
-            config.tbar = [{ text: '编辑', itemId: 'pve-komodo-stack-edit', disabled: true, handler: function (button) {
+            config.tbar = [{ xtype: 'tbtext', text: '选择模式' },
+                { xtype: 'combobox', itemId: 'pve-komodo-stack-mode', width: 220, emptyText: '选择模式', queryMode: 'local', editable: false,
+                    forceSelection: true, displayField: 'label', valueField: 'mode', store: { autoDestroy: true, fields: ['mode', 'label'], data: stackModeChoices },
+                    listConfig: { itemTpl: '{label:htmlEncode}' }, listeners: { change: function (field) {
+                        const tab = field.up('[pveKomodoStackTab]'), page = stackRoot(tab);
+                        if (tab._pveKomodoStackModeRendering || !tab._pveKomodoStackTabActive) return;
+                        setStackMode(page, tab, field.getValue());
+                    } } },
+                { text: '编辑', itemId: 'pve-komodo-stack-edit', disabled: true, handler: function (button) {
                 const tab = button.up('[pveKomodoStackTab]'), grid = tab.down('#pve-komodo-stack-config-grid');
                 stackScalarEditor(stackRoot(tab), grid.getSelectionModel().getSelection()[0]);
             } }];

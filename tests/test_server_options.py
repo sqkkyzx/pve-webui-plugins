@@ -47,7 +47,7 @@ def update_response():
     })
 
 
-def handler_for(raw=None, *, level="Write", ui_disabled=False, state="Ok", submit=None, overrides=None, seen=None):
+def handler_for(raw=None, *, level="Write", ui_disabled=False, state="Ok", status_info=None, submit=None, overrides=None, seen=None):
     raw = raw if raw is not None else resource()
     overrides = overrides or {}
 
@@ -85,7 +85,10 @@ def handler_for(raw=None, *, level="Write", ui_disabled=False, state="Ok", submi
             response = {"level": level, "specific": []}
         elif variant == "ListServers":
             assert payload["params"] == {"query": {"names": [SERVER], "templates": "Include"}, "limit": 0}
-            response = [{"id": SERVER, "name": "docker-host", "template": False, "info": {"state": state, "public_key": "online-key-must-not-be-used"}}]
+            response_info = {"state": state, "public_key": "online-key-must-not-be-used"}
+            if status_info is not None:
+                response_info.update(status_info)
+            response = [{"id": SERVER, "name": "docker-host", "template": False, "info": response_info}]
         else:
             pytest.fail("unapproved RPC")
         return httpx.Response(200, json=response, headers={"set-cookie": "other=must-not-replay; Path=/"})
@@ -121,6 +124,8 @@ def test_options_read_returns_all_21_real_fields_expected_public_key_and_no_secr
     assert len(CONFIG_FIELDS) == 21
     assert result["config"]["maintenance_windows"] == [window()]
     assert result["public_key"] == "public-spki-base64"
+    assert result["attempted_public_key"] is None
+    assert result["error"] is None
     assert result["can_write"] is result["can_rotate"] is True
     assert result["server_state"] == "Ok"
     assert len(result["version"]) == 64
@@ -129,7 +134,7 @@ def test_options_read_returns_all_21_real_fields_expected_public_key_and_no_secr
     assert_safe(result)
 
 
-def test_version_changes_for_config_public_key_updated_at_and_server_id():
+def test_version_changes_for_config_public_key_status_error_attempted_key_updated_at_and_server_id():
     original = snapshot(handler_for())["version"]
     for mutate in (
         lambda row: row["config"].update(region="west"),
@@ -146,6 +151,40 @@ def test_version_changes_for_config_public_key_updated_at_and_server_id():
     with pytest.raises(KomodoActionError) as error:
         snapshot(handler_for(raw))
     assert error.value.code == "komodo_server_unavailable"
+
+
+def test_server_status_error_and_attempted_key_are_projected_and_secrets_redacted():
+    error = {"error": f"invalid key {SECRET}", "trace": [
+        "Ensure the key matches", f"attempted {PASSKEY}", f"private {PRIVATE_KEY}",
+        f"linked https://private.invalid/{SECRET}",
+    ]}
+    attempted = "MCowBQYDK2V-test-key"
+    result = snapshot(handler_for(status_info={"err": error, "attempted_public_key": attempted}))
+    assert result["error"] == {"error": "invalid key [REDACTED_SECRET]", "trace": [
+        "Ensure the key matches", "attempted [REDACTED_SECRET]", "private [REDACTED_SECRET]",
+        "linked [REDACTED_SECRET]",
+    ]}
+    assert result["attempted_public_key"] == attempted
+    assert_safe(result)
+    assert snapshot(handler_for(status_info={"err": {"error": "changed", "trace": []},
+                                            "attempted_public_key": attempted}))["version"] != result["version"]
+    assert snapshot(handler_for(status_info={"err": error, "attempted_public_key": "another-key"}))["version"] != result["version"]
+
+
+@pytest.mark.parametrize("status_info", [
+    {"err": {"error": "bad", "trace": [], "credential": "unexpected"}},
+    {"err": {"error": "bad", "trace": "not-a-list"}},
+    {"attempted_public_key": 42},
+])
+def test_malformed_server_status_fields_are_rejected(status_info):
+    with pytest.raises(KomodoActionError) as error:
+        snapshot(handler_for(status_info=status_info))
+    assert error.value.code == "unsupported_server_options"
+
+
+def test_server_status_error_preserves_multiline_diagnostics():
+    result = snapshot(handler_for(status_info={"err": {"error": "first\nsecond", "trace": ["one\r\ntwo\tthree"]}}))
+    assert result["error"] == {"error": "first\nsecond", "trace": ["one\r\ntwo\tthree"]}
 
 
 @pytest.mark.parametrize("level,disabled,state,can_write,can_rotate", [

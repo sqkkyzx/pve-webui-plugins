@@ -34,6 +34,8 @@ _WINDOW_DEFAULTS = {"description": "", "schedule_type": "Daily", "day_of_week": 
 _WEEKDAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
 _HASH = re.compile(r"[0-9a-f]{64}")
 _REQUEST_SECONDS = 10.0
+_ERROR_TEXT_LIMIT = 8192
+_ERROR_TRACE_LIMIT = 128
 
 
 def _invalid(code="invalid_server_options", status=422):
@@ -150,6 +152,61 @@ def validate_public_key(value) -> str:
     return _text(value, 8192)
 
 
+def _redact_status_text(value: str, secrets) -> str:
+    for secret in sorted((secret for secret in secrets if isinstance(secret, str) and secret), key=len, reverse=True):
+        value = value.replace(secret, "[REDACTED_SECRET]")
+    return value
+
+
+def _status_secrets(config, info, key, secret):
+    values = [key, secret]
+    for field in ("passkey", "private_key"):
+        candidate = config.get(field) if isinstance(config, dict) else None
+        if isinstance(candidate, str):
+            values.append(candidate)
+    candidate = info.get("private_key") if isinstance(info, dict) else None
+    if isinstance(candidate, str):
+        values.append(candidate)
+    links = config.get("links") if isinstance(config, dict) else None
+    if isinstance(links, list):
+        values.extend(item for item in links if isinstance(item, str))
+    return tuple(values)
+
+
+def _status_error(value, secrets):
+    """Keep the native connection error shape without leaking credentials."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - {"error", "trace"}:
+        _invalid("unsupported_server_options", 502)
+    error = value.get("error")
+    trace = value.get("trace")
+    if (not isinstance(error, str) or len(error) > _ERROR_TEXT_LIMIT
+            or any((ord(character) < 32 and character not in "\r\n\t") or ord(character) == 127 for character in error)
+            or not isinstance(trace, list) or len(trace) > _ERROR_TRACE_LIMIT):
+        _invalid("unsupported_server_options", 502)
+    safe_trace = []
+    for item in trace:
+        if (not isinstance(item, str) or len(item) > _ERROR_TEXT_LIMIT
+                or any((ord(character) < 32 and character not in "\r\n\t") or ord(character) == 127 for character in item)):
+            _invalid("unsupported_server_options", 502)
+        safe_trace.append(_redact_status_text(item, secrets))
+    return {"error": _redact_status_text(error, secrets), "trace": safe_trace}
+
+
+def _status_fields(info, secrets):
+    if not isinstance(info, dict):
+        _invalid("invalid_response", 502)
+    attempted = info.get("attempted_public_key")
+    if attempted is not None:
+        try:
+            attempted = validate_public_key(attempted)
+        except KomodoActionError:
+            _invalid("unsupported_server_options", 502)
+        attempted = attempted or None
+    return _status_error(info.get("err"), secrets), attempted
+
+
 class GuestBoundOptionsService:
     def __init__(self, store: GuestLinkStore | None, pve: PveGuestClient) -> None:
         self.store, self.pve = store, pve
@@ -249,14 +306,19 @@ async def get_server_options(server_id: str, *, origin: str | None, key: str | N
     matches = [item for item in items if isinstance(item, dict) and _object_id(item.get("id")) == server_id]
     if len(matches) != 1 or not isinstance(matches[0].get("info"), dict):
         _invalid("komodo_server_unavailable", 409)
+    status_error, attempted_public_key = _status_fields(
+        matches[0]["info"], _status_secrets(server["config"], server["info"], key, secret))
     raw_state = matches[0]["info"].get("state")
     state = raw_state if isinstance(raw_state, str) and raw_state in {"Ok", "NotOk", "Disabled"} else "NotOk"
     version = hashlib.sha256(json.dumps({
-        "server_id": server_id, "config": config, "public_key": public_key, "updated_at": server.get("updated_at"),
+        "server_id": server_id, "config": config, "public_key": public_key,
+        "attempted_public_key": attempted_public_key, "error": status_error,
+        "updated_at": server.get("updated_at"),
     }, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
     can_write = not core["ui_write_disabled"] and permission.get("level") == "Write"
     return {"server_id": server_id, "server_name": server["name"], "server_state": state,
-            "config": config, "public_key": public_key, "version": version,
+            "config": config, "public_key": public_key, "attempted_public_key": attempted_public_key,
+            "error": status_error, "version": version,
             "can_write": can_write, "can_rotate": can_write and state == "Ok"}
 
 

@@ -1929,6 +1929,7 @@ function sampleGuestOptions() {
     return {
         binding_revision: 7, server_id: 'a'.repeat(24), server_name: '<host>', server_state: 'Ok',
         version: 'b'.repeat(64), can_write: true, can_rotate: true, csrf_token: 'options-csrf', public_key: 'public-key',
+        attempted_public_key: null, error: null,
         config: { enabled: true, auto_rotate_keys: false, address: 'wss://periphery:8120', insecure_tls: true,
             external_address: '', region: 'test', ignore_mounts: ['/boot', '/var/lib'], stats_monitoring: true,
             auto_prune: false, send_unreachable_alerts: true, send_version_mismatch_alerts: false,
@@ -2088,6 +2089,39 @@ test('public key editing and rotation are separate confirmed actions and never e
     page.press('refresh'); page.respond({ ...sampleGuestOptions(), can_write: false, can_rotate: false });
     page.selectOption('enabled'); assert.equal(page.control('edit').disabled, true);
     assert.match(page.control('status').text, /只读/);
+});
+
+test('server errors are escaped and invalid public keys require exact server-name confirmation', () => {
+    const page = guestOptionsPage(); page.activate();
+    const payload = { ...sampleGuestOptions(), attempted_public_key: 'attempted-key', error: {
+        error: 'Core failed <key>\nsecond line', trace: ['Ensure key matches', '<private trace>\r\nnext'],
+    } };
+    page.respond(payload);
+    assert.equal(page.control('error').disabled, false);
+    assert.equal(page.control('public-key').disabled, false);
+    page.press('error');
+    const errorWindow = page.browser.Ext.dialogs.at(-1);
+    assert.equal(errorWindow.title, '错误详情');
+    assert.match(errorWindow.items[0].html, /Core failed &lt;key&gt;/);
+    assert.match(errorWindow.items[0].html, /second line/);
+    assert.match(errorWindow.items[0].html, /&lt;private trace&gt;/);
+    page.press('public-key');
+    const confirm = page.browser.Ext.dialogs.at(-1);
+    assert.equal(confirm.title, '确认公钥');
+    assert.equal(confirm.down('#pve-komodo-public-key-confirm').disabled, true);
+    const name = confirm.down('#pve-komodo-public-key-confirm-name');
+    name.setValue('wrong');
+    assert.equal(confirm.down('#pve-komodo-public-key-confirm').disabled, true);
+    name.setValue('<host>');
+    assert.equal(confirm.down('#pve-komodo-public-key-confirm').disabled, false);
+    confirm.down('#pve-komodo-public-key-confirm').handler();
+    const request = page.browser.Ext.requests[1];
+    assert.equal(request.method, 'POST');
+    assert.equal(request.jsonData.action, 'public_key');
+    assert.equal(request.jsonData.public_key, 'attempted-key');
+    assert.equal(request.jsonData.config, undefined);
+    page.respond({ ok: true, status: 'completed' }); page.respond(sampleGuestOptions());
+    assert.match(page.control('status').text, /已确认服务器公钥/);
 });
 
 test('maintenance windows preserve every field and Core timezone while native list edits remain drafts until confirmed', () => {
@@ -2924,6 +2958,63 @@ test('stack tree text opens four native tabs with help context and never writes 
     assert.equal(page.control('stack-deploy').disabled, false);
     assert.match(page.control('stack-status').text, /&lt;stack-a&gt;/);
     assert.equal(page.view.native.nativeResourceIds.length, 3);
+});
+
+test('stack configuration offers the three source modes and saves a confirmed mode change as a partial config', () => {
+    const page = stackPage(), tab = page.tab('config'); page.respond(sampleStackDetails());
+    const selector = tab.control('stack-mode');
+    assert.equal(selector.xtype, 'combobox');
+    assert.equal(selector.editable, false);
+    assert.equal(selector.disabled, false);
+    assert.equal(selector.getValue(), 'host');
+    assert.deepEqual(Array.from(selector.store.data, (row) => [row.mode, row.label]), [
+        ['ui', '界面编辑'], ['host', '服务器文件'], ['git', 'Git 代码仓库'],
+    ]);
+    const rows = tab.grid('stack-config').getStore().data;
+    assert.ok(rows.some((row) => row.key === 'run_directory'));
+    assert.equal(rows.some((row) => row.key === 'repo' || row.key === 'file_contents'), false);
+
+    selector.setValue('git');
+    assert.equal(selector.getValue(), 'host', 'the current mode remains selected until confirmation');
+    assert.equal(page.browser.Ext.requests.filter((request) => request.method === 'POST').length, 0);
+    assert.match(page.browser.Ext.dialogs.at(-1).options.message, /可能按应用栈策略触发检查或部署/);
+    page.answer('no');
+    assert.equal(selector.getValue(), 'host');
+    assert.equal(page.browser.Ext.requests.filter((request) => request.method === 'POST').length, 0);
+
+    selector.setValue('git'); page.answer('yes');
+    const post = page.browser.Ext.requests.at(-1);
+    assert.equal(post.method, 'POST');
+    assert.deepEqual(JSON.parse(JSON.stringify(post.jsonData.config)), { files_on_host: false, repo: 'namespace/repo' });
+    assert.equal(post.jsonData.base_version, 'a'.repeat(64));
+    page.respond({ ok: true, status: 'completed' });
+    assert.equal(page.browser.Ext.requests.at(-1).method, 'GET');
+    const git = sampleStackDetails(); git.source_mode = 'git'; git.config.files_on_host = false; git.config.repo = 'owner/repository';
+    git.config.branch = 'main'; git.config.file_contents = 'old compose contents';
+    page.respond(git);
+    assert.equal(selector.getValue(), 'git');
+    const gitRows = tab.grid('stack-config').getStore().data;
+    assert.ok(gitRows.some((row) => row.key === 'repo'));
+    assert.ok(gitRows.some((row) => row.key === 'branch'));
+    assert.ok(gitRows.some((row) => row.key === 'config_files'));
+    assert.equal(gitRows.some((row) => row.key === 'file_contents'), false);
+});
+
+test('stack source fields follow native UI Defined, Files On Server and Git Repo modes', () => {
+    const cases = [
+        { mode: 'host', configure(data) { data.source_mode = 'host'; }, visible: ['run_directory', 'file_paths', 'config_files'], hidden: ['repo', 'file_contents'] },
+        { mode: 'ui', configure(data) { data.source_mode = 'ui'; data.config.files_on_host = false; data.config.file_contents = 'services: {}'; },
+            visible: ['file_contents', 'environment'], hidden: ['run_directory', 'file_paths', 'config_files', 'repo'] },
+        { mode: 'git', configure(data) { data.source_mode = 'git'; data.config.files_on_host = false; data.config.repo = 'owner/repository'; data.config.branch = 'main'; },
+            visible: ['repo', 'branch', 'linked_repo', 'run_directory', 'file_paths', 'config_files', 'webhook_enabled'], hidden: ['file_contents'] },
+    ];
+    for (const item of cases) {
+        const page = stackPage(), tab = page.tab('config'), data = sampleStackDetails(); item.configure(data); page.respond(data);
+        assert.equal(tab.control('stack-mode').getValue(), item.mode);
+        const keys = new Set(tab.grid('stack-config').getStore().data.filter((row) => row.kind !== 'heading').map((row) => row.key));
+        for (const key of item.visible) assert.ok(keys.has(key), item.mode + ' should show ' + key);
+        for (const key of item.hidden) assert.equal(keys.has(key), false, item.mode + ' should hide ' + key);
+    }
 });
 
 test('stack config editors preserve original values, reset and confirm only a changed partial field with version context', () => {
