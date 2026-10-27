@@ -2649,7 +2649,7 @@ test('container view appends one state-restorable selector option and uses an in
     assert.equal(view.tree.statusToolbar.visible, false);
     const server = view.node('server:' + '1'.repeat(24));
     assert.equal(server.get('binding'), 'VM 102（<vm-name>）');
-    assert.equal(server.get('text'), '102 <vm-name> [host-a]');
+    assert.equal(server.get('text'), '102 (<vm-name>)');
     assert.equal(server.get('iconCls'), 'fa fa-desktop x-tree-icon-custom running');
     assert.equal(view.node('pve-komodo-containers-root').get('pveKomodoKind'), 'datacenter');
     assert.equal(view.node('pve-komodo-containers-root').get('iconCls'), 'fa fa-server x-tree-icon-custom');
@@ -2658,13 +2658,16 @@ test('container view appends one state-restorable selector option and uses an in
     assert.equal(server.childNodes[0].get('iconCls'), 'fa fa-cubes x-tree-icon-custom pending');
     assert.equal(server.childNodes[2].get('text'), '容器');
     assert.equal(server.childNodes[2].childNodes[0].get('association'), '应用栈归属暂时无法核验');
-    assert.equal(view.node('server:' + '2'.repeat(24)).get('binding'), '未关联 CT 或 VM');
+    const independent = view.node('server:' + '2'.repeat(24));
+    assert.equal(independent.get('binding'), '未关联 CT 或 VM');
+    assert.equal(independent.get('text'), 'host-b');
     assert.deepEqual(view.native.nativeResourceIds, ['root', 'qemu/102', 'lxc/252']);
     assert.equal(view.workspace.nativeSelections.length, 0);
     const renderer = view.tree.columns[0].renderer;
+    assert.equal(renderer(independent.get('text'), {}, independent), 'host-b');
     assert.match(renderer('<stack-a>', {}, server.childNodes[0]), /&lt;stack-a&gt;/);
     assert.doesNotMatch(renderer(server.get('text'), {}, server), /<vm-name>/);
-    assert.equal(renderer(server.get('text'), {}, server), '102 &lt;vm-name&gt; [host-a]');
+    assert.equal(renderer(server.get('text'), {}, server), '102 (&lt;vm-name&gt;)');
     assert.ok([...browser.Ext.requests, ...browser.Ext.guestRequests].every((request) => request.method === 'GET' && request.disableCaching === false));
 });
 

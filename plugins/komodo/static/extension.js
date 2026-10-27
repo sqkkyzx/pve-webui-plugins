@@ -3060,8 +3060,8 @@
                     iconCls: 'fa fa-info-circle', pveKomodoKind: 'notice', leaf: true }];
             });
             children.push({ id: 'server:' + serverId,
-                text: guest ? link.vmid + ' ' + guestName + ' [' + entry.server.name + ']' : entry.server.name,
-                pveKomodoKind: 'server', server_id: serverId, binding: binding, bindingWarning: !guest,
+                text: guest ? link.vmid + ' (' + guestName + ')' : entry.server.name,
+                pveKomodoKind: 'server', server_id: serverId, binding: binding, bindingWarning: !!link && !guest,
                 iconCls: guest ? 'fa ' + (link.guest_type === 'qemu' ? 'fa-desktop' : 'fa-cube') + ' x-tree-icon-custom ' + guestStatus : 'fa fa-server x-tree-icon-custom', leaf: false,
                 expanded: state.expanded.has('server:' + serverId) ? state.expanded.get('server:' + serverId) : true,
                 children: groups.length ? groups : [{ id: 'notice:' + serverId, text: '未取得可显示的应用栈或容器（监控缓存）',
