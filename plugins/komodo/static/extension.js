@@ -76,7 +76,7 @@
         Ok: '正常', NotOk: '不可用', Disabled: '已禁用', Unknown: '未知',
         Running: '运行中', Failed: '失败', running: '运行中', stopped: '已停止',
         paused: '已暂停', deploying: '部署中', restarting: '重启中',
-        unhealthy: '不健康', down: '已停止', unknown: '未知',
+        unhealthy: '不健康', down: '已停止', unknown: '未知', pending: '处理中', error: '异常',
         exited: '已退出', created: '已创建', dead: '异常', removing: '移除中',
     };
 
@@ -2973,13 +2973,14 @@
     }
     function emptyContainerTree(state) {
         state.inventory = null; state.links = null; state.linksKnown = false;
-        if (alive(state.tree)) state.tree.setRootNode({ id: containerViewId + '-root', expanded: true, children: [] });
+        if (alive(state.tree)) state.tree.setRootNode({ id: containerViewId + '-root', text: '数据中心',
+            iconCls: 'fa fa-server x-tree-icon-custom', pveKomodoKind: 'datacenter', leaf: false, expanded: true, children: [] });
     }
     function rememberContainerTree(state) {
         if (!alive(state.tree)) return;
         const root = state.tree.getRootNode();
         if (root && root.childNodes.length) root.cascadeBy(function (node) {
-            if (['server', 'stack', 'containers'].includes(node.get('pveKomodoKind'))) state.expanded.set(node.getId(), node.isExpanded());
+            if (['datacenter', 'server', 'stack', 'containers'].includes(node.get('pveKomodoKind'))) state.expanded.set(node.getId(), node.isExpanded());
         });
         const selected = state.tree.getSelectionModel().getSelection()[0];
         if (selected) state.selected = selected.getId();
@@ -2991,7 +2992,16 @@
         else if (['created', 'exited', 'stopped'].includes(status)) nativeStatus = 'stopped';
         else if (['restarting', 'stopping', 'removing'].includes(status)) nativeStatus = 'pending';
         else if (status === 'dead') nativeStatus = 'error';
-        return 'fa fa-cube ' + nativeStatus;
+        return 'fa fa-cube x-tree-icon-custom ' + nativeStatus;
+    }
+    function containerTreeStackStatus(children) {
+        if (!children.length) return 'unknown';
+        const statuses = children.map(function (child) { return child.iconCls.split(/\s+/).pop(); });
+        if (statuses.includes('error')) return 'error';
+        if (statuses.includes('unknown')) return 'unknown';
+        if (statuses.includes('pending')) return 'pending';
+        const first = statuses[0];
+        return statuses.every(function (status) { return status === first; }) ? first : 'pending';
     }
     function renderContainerTree(state) {
         if (!state.inventory || containerTreeUser(state) !== state.user || state.authBlocked) return;
@@ -3010,7 +3020,8 @@
             if (stack && typeof stack.id === 'string' && /^[0-9a-f]{24}$/i.test(stack.id) && typeof stack.name === 'string' && servers.has(stack.server_id)) {
                 const stacks = servers.get(stack.server_id).stacks;
                 if (!stacks.has(stack.id)) stacks.set(stack.id, { id: 'stack:' + stack.server_id + ':' + stack.id,
-                    text: stack.name, iconCls: 'fa fa-cubes', pveKomodoKind: 'stack', server_id: stack.server_id, stack_id: stack.id, children: [] });
+                    text: stack.name, iconCls: 'fa fa-cubes x-tree-icon-custom unknown', pveKomodoKind: 'stack',
+                    server_id: stack.server_id, stack_id: stack.id, state: 'unknown', children: [] });
             }
         });
         state.inventory.containers.forEach(function (row) {
@@ -3031,14 +3042,18 @@
             const link = links.get(serverId);
             const binding = state.linksKnown ? link ? guestLabel(link) : '未关联 CT 或 VM' : '关联状态未知';
             const guest = state.linksKnown && validGuest(link) && link.status === 'linked' && link.can_navigate === true;
-            const guestName = guest && typeof link.guest_name === 'string' && link.guest_name.trim() ? link.guest_name : '未命名';
-            // Reuse PVE's VM/CT icon and status classes. The green running
-            // marker must describe the PVE guest, not a Komodo container.
-            const guestStatus = guest && ['running', 'stopped', 'paused'].includes(link.guest_status) ? link.guest_status : 'unknown';
+            const guestName = validGuest(link) && typeof link.guest_name === 'string' && link.guest_name.trim() ? link.guest_name : '未命名';
+            // Guest status belongs to the PVE VM/CT; stack and container
+            // status classes are derived independently from Komodo data.
+            const guestStatus = validGuest(link) && ['running', 'stopped', 'paused'].includes(link.guest_status) ? link.guest_status : 'unknown';
             const groups = Array.from(entry.stacks.values());
             if (entry.containers.length) groups.push({ id: 'containers:' + serverId, text: '容器', pveKomodoKind: 'containers',
-                server_id: serverId, iconCls: 'fa fa-folder-open-o', children: entry.containers });
+                server_id: serverId, iconCls: 'fa fa-folder-open-o x-tree-icon-custom', children: entry.containers });
             groups.forEach(function (group) {
+                if (group.pveKomodoKind === 'stack') {
+                    group.state = containerTreeStackStatus(group.children);
+                    group.iconCls = 'fa fa-cubes x-tree-icon-custom ' + group.state;
+                }
                 group.leaf = false;
                 group.expanded = state.expanded.has(group.id) ? state.expanded.get(group.id) : true;
                 if (!group.children.length) group.children = [{ id: 'notice:' + group.id, text: '未取得可显示的容器（监控缓存）',
@@ -3047,7 +3062,7 @@
             children.push({ id: 'server:' + serverId,
                 text: guest ? link.vmid + ' ' + guestName + ' [' + entry.server.name + ']' : entry.server.name,
                 pveKomodoKind: 'server', server_id: serverId, binding: binding, bindingWarning: !guest,
-                iconCls: guest ? 'fa ' + (link.guest_type === 'qemu' ? 'fa-desktop' : 'fa-cube') + ' ' + guestStatus : 'fa fa-server', leaf: false,
+                iconCls: validGuest(link) ? 'fa ' + (link.guest_type === 'qemu' ? 'fa-desktop' : 'fa-cube') + ' x-tree-icon-custom ' + guestStatus : 'fa fa-server x-tree-icon-custom', leaf: false,
                 expanded: state.expanded.has('server:' + serverId) ? state.expanded.get('server:' + serverId) : true,
                 children: groups.length ? groups : [{ id: 'notice:' + serverId, text: '未取得可显示的应用栈或容器（监控缓存）',
                     iconCls: 'fa fa-info-circle', pveKomodoKind: 'notice', leaf: true }],
@@ -3058,7 +3073,10 @@
             const matches = (node.children || []).map(filtered).filter(Boolean);
             return matches.length ? Object.assign({}, node, { children: matches }) : null;
         }
-        state.tree.setRootNode({ id: containerViewId + '-root', expanded: true, children: children.map(filtered).filter(Boolean) });
+        state.tree.setRootNode({ id: containerViewId + '-root', text: '数据中心', iconCls: 'fa fa-server x-tree-icon-custom',
+            pveKomodoKind: 'datacenter', leaf: false,
+            expanded: state.expanded.has(containerViewId + '-root') ? state.expanded.get(containerViewId + '-root') : true,
+            children: children.map(filtered).filter(Boolean) });
         if (state.selected) {
             const selected = state.tree.getStore().getNodeById(state.selected);
             if (selected) state.tree.getSelectionModel().select(selected);
@@ -3203,19 +3221,19 @@
         const state = { native: native, workspace: workspace, tree: null, active: false, generation: 0, navigationGeneration: 0,
             requests: [], expanded: new Map(), selected: null, user: null, inventory: null, links: null };
         const tree = Ext.create('Ext.tree.Panel', { itemId: 'pve-komodo-container-tree', flex: 1, hidden: true, border: false,
-            rootVisible: false, useArrows: true, stateful: false, animate: false,
+            rootVisible: true, useArrows: true, stateful: false, animate: false,
             store: { model: 'Ext.data.TreeModel', autoDestroy: true, root: { id: containerViewId + '-root', expanded: true, children: [] } },
             columns: [{ xtype: 'treecolumn', dataIndex: 'text', flex: 1, sortable: false, renderer: function (value, meta, record) {
                 let rendered = text(value);
                 if (record.get('pveKomodoKind') === 'server' && record.get('bindingWarning')) rendered += ' · ' + text(record.get('binding'));
-                if (record.get('pveKomodoKind') === 'container' && meta) meta.tdAttr = 'data-qtip="' + text(stateText(record.get('state'))) + '"';
+                if (['container', 'stack'].includes(record.get('pveKomodoKind')) && meta) meta.tdAttr = 'data-qtip="' + text(stateText(record.get('state'))) + '"';
                 if (record.get('association')) rendered += ' · ' + text(record.get('association'));
                 return rendered;
             } }], hideHeaders: true,
             viewConfig: { enableTextSelection: true, emptyText: '未取得可显示的数据；服务器可能离线或没有权限', deferEmptyText: false },
             tbar: [{ text: '刷新', itemId: 'pve-komodo-tree-refresh', handler: function () { loadContainerTree(state); } },
                 { text: '新建', itemId: 'pve-komodo-tree-new', handler: function () { openServerCreate(workspace); } },
-                { xtype: 'textfield', itemId: 'pve-komodo-tree-search', emptyText: '搜索服务器或容器', flex: 1,
+                { xtype: 'textfield', itemId: 'pve-komodo-tree-search', emptyText: '搜索服务器、应用栈或容器', flex: 1,
                     listeners: { change: function () { if (state.inventory) renderContainerTree(state); } } }],
             bbar: [{ xtype: 'tbtext', itemId: 'pve-komodo-tree-status', text: '' }],
             listeners: { itemclick: function (view, record, item, index, event) {

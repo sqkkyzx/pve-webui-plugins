@@ -2650,9 +2650,12 @@ test('container view appends one state-restorable selector option and uses an in
     const server = view.node('server:' + '1'.repeat(24));
     assert.equal(server.get('binding'), 'VM 102（<vm-name>）');
     assert.equal(server.get('text'), '102 <vm-name> [host-a]');
-    assert.equal(server.get('iconCls'), 'fa fa-desktop running');
+    assert.equal(server.get('iconCls'), 'fa fa-desktop x-tree-icon-custom running');
+    assert.equal(view.node('pve-komodo-containers-root').get('pveKomodoKind'), 'datacenter');
+    assert.equal(view.node('pve-komodo-containers-root').get('iconCls'), 'fa fa-server x-tree-icon-custom');
     assert.deepEqual(Array.from(server.childNodes, (record) => record.get('pveKomodoKind')), ['stack', 'stack', 'containers']);
     assert.equal(server.childNodes[0].childNodes.length, 2);
+    assert.equal(server.childNodes[0].get('iconCls'), 'fa fa-cubes x-tree-icon-custom pending');
     assert.equal(server.childNodes[2].get('text'), '容器');
     assert.equal(server.childNodes[2].childNodes[0].get('association'), '应用栈归属暂时无法核验');
     assert.equal(view.node('server:' + '2'.repeat(24)).get('binding'), '未关联 CT 或 VM');
@@ -2681,7 +2684,7 @@ test('container leaves use native status icons and escaped tooltips without appe
     const renderer = view.tree.columns[0].renderer;
     cases.forEach(([state, nativeStatus], index) => {
         const row = data.containers[index], record = view.node('container:' + row.id), meta = {};
-        assert.equal(record.get('iconCls'), 'fa fa-cube ' + nativeStatus);
+        assert.equal(record.get('iconCls'), 'fa fa-cube x-tree-icon-custom ' + nativeStatus);
         assert.equal(record.get('state'), state, 'the raw state remains available for filtering');
         assert.equal(renderer(record.get('text'), meta, record), '&lt;app &quot;' + index + '&quot;&gt;');
         assert.match(meta.tdAttr, /^data-qtip="[^"]*"$/);
@@ -2701,10 +2704,10 @@ test('container tree refresh updates status icons while state search and selecti
     view.respond(data); view.respond(sampleTreeLinks(), 200, 'links');
     const id = 'container:' + intended.id;
     view.tree.getSelectionModel().select(view.node(id));
-    assert.equal(view.node(id).get('iconCls'), 'fa fa-cube running');
+    assert.equal(view.node(id).get('iconCls'), 'fa fa-cube x-tree-icon-custom running');
     const updated = { ...data, containers: data.containers.map((row) => row.id === intended.id ? { ...row, state: 'restarting' } : row) };
     view.refresh(); view.respond(updated); view.respond(sampleTreeLinks(), 200, 'links');
-    assert.equal(view.node(id).get('iconCls'), 'fa fa-cube pending');
+    assert.equal(view.node(id).get('iconCls'), 'fa fa-cube x-tree-icon-custom pending');
     assert.equal(view.tree.getSelectionModel().getSelection()[0].getId(), id);
     const requests = view.browser.Ext.requests.length + view.browser.Ext.guestRequests.length;
     view.control('search').setValue('restarting');
