@@ -2633,7 +2633,7 @@ function sampleTreeLinks() {
         guest_status: 'running', status: 'linked', can_navigate: true, revision: 1 }], errors: [] };
 }
 
-test('container view appends one state-restorable selector option and uses an independent three-level tree without native resources or rid mutations', () => {
+test('container view appends one state-restorable selector option and uses an independent datacenter hierarchy without native resources or rid mutations', () => {
     const view = containerView(); const { browser } = view;
     const selector = browser.Ext.create('PVE.form.ViewSelector');
     assert.deepEqual(selector.store.data.map((row) => row.key), ['server', 'folder', 'pool', 'tags', 'pve-komodo-containers']);
@@ -2698,6 +2698,18 @@ test('container leaves use native status icons and escaped tooltips without appe
     });
 });
 
+test('unconfirmed guest associations keep standalone server icons despite a known VM or CT status', () => {
+    const links = sampleTreeLinks();
+    links.links.push({ server_id: '2'.repeat(24), guest_type: 'lxc', vmid: 252, guest_name: 'pending-guest',
+        guest_status: 'running', status: 'needs_confirmation', can_navigate: false, revision: 1 });
+    const view = containerView(); view.switch('pve-komodo-containers');
+    view.respond(sampleContainerTree()); view.respond(links, 200, 'links');
+    const server = view.node('server:' + '2'.repeat(24));
+    assert.equal(server.get('iconCls'), 'fa fa-server x-tree-icon-custom');
+    assert.equal(server.get('text'), 'host-b');
+    assert.equal(server.get('binding'), 'CT 252（pending-guest） · 待确认');
+});
+
 test('container tree refresh updates status icons while state search and selection remain local', () => {
     const data = sampleContainerTree(), intended = data.containers[0];
     const view = containerView(); view.switch('pve-komodo-containers');
@@ -2734,7 +2746,7 @@ test('entering a restored custom view keeps full native server filtering without
     assert.equal(view.native.filterCalls.length, calls, 'a full hidden server tree is reused');
 });
 
-test('three-level tree refresh preserves expansion and highlight without navigating, and search and group clicks stay local', () => {
+test('datacenter tree refresh preserves expansion and highlight without navigating, and search and group clicks stay local', () => {
     const view = containerView(); view.switch('pve-komodo-containers');
     view.respond(sampleContainerTree()); view.respond(sampleTreeLinks(), 200, 'links');
     const stackId = 'stack:' + '1'.repeat(24) + ':' + '3'.repeat(24);
