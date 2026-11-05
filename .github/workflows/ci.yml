@@ -93,8 +93,19 @@ jobs:
       - name: Export verified deployment images
         if: github.event_name == 'workflow_dispatch' && inputs.bundle_debug_image
         run: |
-          docker image save pve-webui-plugins:ci | gzip -1 > "$RUNNER_TEMP/pve-webui-plugins-runtime-linux-amd64.tar.gz"
-          docker image save pve-webui-plugins:debug-ci | gzip -1 > "$RUNNER_TEMP/pve-webui-plugins-debug-linux-amd64.tar.gz"
+          version=$(python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          tree = ast.parse(Path('app/main.py').read_text())
+          print(next(node.value.value for node in tree.body if isinstance(node, ast.Assign)
+                     and any(isinstance(target, ast.Name) and target.id == 'VERSION' for target in node.targets)))
+          PY
+          )
+          test "$(docker image inspect pve-webui-plugins:ci --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$version"
+          docker image tag pve-webui-plugins:ci "pve-webui-plugins:$version"
+          docker image tag pve-webui-plugins:debug-ci "pve-webui-plugins:$version-debug"
+          docker image save "pve-webui-plugins:$version" | gzip -1 > "$RUNNER_TEMP/pve-webui-plugins-runtime-linux-amd64.tar.gz"
+          docker image save "pve-webui-plugins:$version-debug" | gzip -1 > "$RUNNER_TEMP/pve-webui-plugins-debug-linux-amd64.tar.gz"
           cd "$RUNNER_TEMP"
           sha256sum pve-webui-plugins-runtime-linux-amd64.tar.gz > pve-webui-plugins-runtime-linux-amd64.tar.gz.sha256
           sha256sum pve-webui-plugins-debug-linux-amd64.tar.gz > pve-webui-plugins-debug-linux-amd64.tar.gz.sha256

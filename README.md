@@ -2,7 +2,7 @@
 
 面向 **Proxmox VE 9** 的非侵入式、可插拔 WebUI 扩展宿主。独立容器内置 FastAPI 与可关闭的 Nginx HTTPS 网关，沿用 PVE 的 ExtJS 组件与登录会话。支持直接访问容器网关，也可接入现有 HAProxy、Nginx 等业务网关。PVE 官方文件、VM/CT 配置和原生管理请求继续由 PVE 提供。
 
-当前版本为 **0.14.0**，采用全新部署的配置契约。模块启停、外部服务连接、别名、图标和附加站点均在「--插件--」中管理，私有配置使用 schema 2。
+当前版本为 **1.0.0**，采用全新部署的配置契约。模块启停、外部服务连接、别名、图标和附加站点均在「--插件--」中管理，私有配置使用 schema 2。主要变化和兼容边界见 [发行说明](docs/releases/v1.0.0.md)。
 
 ## 功能
 
@@ -15,7 +15,7 @@
 
 首次启动只启用内置附加站点。三个可选模块从管理页启用和配置，停用时不导入实现、不注册业务 API、不提供脚本，也不初始化对应外部客户端或数据库。
 
-Komodo 的「统计」「计划任务」仍包含占位页面，部署与代码仓库部分管理功能尚待开放。SafeLine 的可用能力取决于目标版本和授权，附加站点的嵌入效果取决于目标站点与浏览器策略。
+1.0.0 是扩展宿主的正式版本，模块各自标识功能覆盖与成熟度：Komodo、SafeLine WAF 为「部分管理 · 测试中」，节点温度为「只读监测 · 测试中」。Komodo 的「统计」「计划任务」仍包含占位页面，部署与代码仓库部分管理功能尚待开放。SafeLine 的可用能力取决于目标版本和授权，附加站点的嵌入效果取决于目标站点与浏览器策略。
 
 ## 接入架构
 
@@ -35,10 +35,14 @@ flowchart LR
 
 ## 快速部署
 
+GitHub Release 提供经过镜像验证的 `linux/amd64` runtime、debug 镜像归档与 SHA-256 校验文件，以及部署用的 Compose 和环境变量示例。使用预构建 runtime 的下载、校验、`docker load` 和启动步骤见 [v1.0.0 发行说明](docs/releases/v1.0.0.md#使用预构建镜像)。
+
+以下为源码构建方式。
+
 准备能连接 PVE 节点的 Docker 主机，在源码目录创建基础配置。Compose 默认使用命名卷保存配置、数据库和网关证书。
 
 ```sh
-git clone https://github.com/sqkkyzx/pve-webui-plugins.git
+git clone --branch v1.0.0 https://github.com/sqkkyzx/pve-webui-plugins.git
 cd pve-webui-plugins
 cp .env.example .env
 ```
@@ -60,7 +64,7 @@ curl --fail --insecure https://127.0.0.1:8006/pve-plugins/health
 
 从增强入口登录 PVE，在左上角打开「--插件--」。[统一管理表格](docs/wiki/Configuration.md) 中可编辑模块和站点、配置连接、设置显示别名与图标，以及调整混合顺序。类型使用颜色和文字区分，「开发进度」说明功能覆盖与成熟度。点击模块后，通过中间的原生竖向菜单切换介绍、基本配置与帮助文档，右侧显示内容，具体范围见 [内置模块](docs/wiki/Modules.md)。
 
-默认映像为本地构建的 `pve-webui-plugins:local`。服务使用单个 Uvicorn worker、UID/GID `10001:10001`、只读根文件系统、runtime tmpfs 和独立数据卷。采用单实例管理同一数据目录。
+复制 `.env.example` 后默认选择 `pve-webui-plugins:1.0.0`，可使用发行归档载入的镜像；上述本地构建命令也会生成该标签。未设置 `PVE_PLUGINS_IMAGE` 时，Compose 的回退标签为 `pve-webui-plugins:local`。服务使用单个 Uvicorn worker、UID/GID `10001:10001`、只读根文件系统、runtime tmpfs 和独立数据卷。采用单实例管理同一数据目录。
 
 ## 基础配置
 
@@ -94,6 +98,7 @@ curl --fail --insecure https://127.0.0.1:8006/pve-plugins/health
 
 ## 文档
 
+- [v1.0.0 发行说明](docs/releases/v1.0.0.md)
 - [Wiki 首页](docs/wiki/Home.md)
 - [架构与设计边界](docs/wiki/Architecture.md)
 - [安装与双模式接入](docs/wiki/Installation.md)
@@ -119,7 +124,13 @@ node --test tests/*.mjs
 
 [CI](.github/workflows/ci.yml) 执行后端和前端回归、语法检查、Compose 配置检查，以及内置站点与三个可选模块的 8 种组合验证。实际镜像还检查 HTTPS 网关、原生路由、WebSocket、主备切换、严格 CA/名称验证和仅应用模式。正式和 debug 镜像分别检查非 root、只读文件系统、资源生成及源码重载行为。
 
-开发时可以使用 `docker compose -f compose.yaml -f compose.debug.yaml up -d --build`，挂载后端、插件和模板源码并监听变更。新 package 的加载器接入与管理界面接入步骤见 [插件开发](docs/wiki/Plugin-Development.md)。
+开发时使用对应版本源码，并为 debug 镜像指定独立标签：
+
+```sh
+PVE_PLUGINS_IMAGE=pve-webui-plugins:1.0.0-debug docker compose -f compose.yaml -f compose.debug.yaml up -d --build
+```
+
+该方式挂载后端、插件和模板源码并监听变更。新 package 的加载器接入与管理界面接入步骤见 [插件开发](docs/wiki/Plugin-Development.md)。
 
 ## 竞品与定位
 

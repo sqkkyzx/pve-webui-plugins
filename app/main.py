@@ -22,7 +22,7 @@ from app.settings import Settings
 
 
 LOGGER = logging.getLogger("pve_webui_plugins")
-VERSION = "0.14.0"
+VERSION = "1.0.0"
 
 
 # Reject unknown desktop shapes instead of injecting into login providers,
