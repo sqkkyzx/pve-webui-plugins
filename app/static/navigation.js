@@ -117,19 +117,23 @@
         }, true);
     }
     function selectedIcon(selector) {
-        const document = window.document, input = selector.inputEl && selector.inputEl.dom;
+        const document = window.document, inputEl = selector.inputEl, inputWrap = selector.inputWrap;
+        const input = inputEl && inputEl.dom;
         if (!document || typeof document.createElement !== 'function' || !input || !input.parentNode ||
-            !input.classList || typeof selector.getValue !== 'function') return;
+            typeof inputEl.addCls !== 'function' || typeof inputEl.removeCls !== 'function' ||
+            !inputWrap || typeof inputWrap.addCls !== 'function' || typeof selector.getValue !== 'function') return;
         const record = user(workspaceOf(selector)) && selector.getStore().getRange().find(function (row) { return row.get('key') === selector.getValue(); });
         const icon = record && record.get('pluginIcon');
         let element = selector._pvePluginSelectedIcon;
         if (!element) {
             element = document.createElement('span'); element.className = 'pve-plugin-selector-icon';
-            element.setAttribute('aria-hidden', 'true'); input.parentNode.classList.add('pve-plugin-selector-wrap');
+            element.setAttribute('aria-hidden', 'true'); inputWrap.addCls('pve-plugin-selector-wrap');
             input.parentNode.insertBefore(element, input); selector._pvePluginSelectedIcon = element;
         }
         element.hidden = !icon; element.innerHTML = icon ? renderIcon(icon) : '';
-        input.classList.toggle('pve-plugin-selector-input', !!icon);
+        // ExtJS rewrites cached classes on focus/blur; keep its cache in sync.
+        if (icon) inputEl.addCls('pve-plugin-selector-input');
+        else inputEl.removeCls('pve-plugin-selector-input');
     }
     function alive(component) { return component && !component.destroyed && !component.destroying; }
     function workspaceOf(selector) { return alive(selector) && typeof selector.up === 'function' ? selector.up('pveStdWorkspace') : null; }

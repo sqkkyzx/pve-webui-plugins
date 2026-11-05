@@ -20,7 +20,8 @@ function documentFixture() {
         return { tagName: tag.toUpperCase(), children: [], attributes: {}, hidden: false, innerHTML: '',
             classList: { add: (...values) => values.forEach((value) => classes.add(value)), contains: (value) => classes.has(value),
                 toggle(value, enabled) { if (enabled) classes.add(value); else classes.delete(value); } },
-            set className(value) { classes.clear(); value.split(/\s+/).forEach((name) => classes.add(name)); },
+            get className() { return [...classes].join(' '); },
+            set className(value) { classes.clear(); value.split(/\s+/).filter(Boolean).forEach((name) => classes.add(name)); },
             setAttribute(name, value) { this.attributes[name] = value; },
             appendChild(child) { child.parentNode = this; this.children.push(child); },
             insertBefore(child, before) { child.parentNode = this; this.children.splice(this.children.indexOf(before), 0, child); },
@@ -29,6 +30,24 @@ function documentFixture() {
     }
     return { head: element('head'), handlers: [], createElement: element,
         addEventListener(name, callback, capture) { this.handlers.push({ name, callback, capture }); } };
+}
+function extElementFixture(dom) {
+    // Ext 6 keeps its own class map and rewrites className from that cache.
+    // Direct DOM classList changes are consequently lost on native focus/blur.
+    const cachedClasses = new Set(dom.className.split(/\s+/).filter(Boolean));
+    return { dom,
+        addCls(value) {
+            if (!cachedClasses.has(value)) {
+                cachedClasses.add(value); dom.className = [...cachedClasses].join(' ');
+            }
+            return this;
+        },
+        removeCls(value) {
+            if (cachedClasses.delete(value)) dom.className = [...cachedClasses].join(' ');
+            return this;
+        },
+        toggleCls(value, enabled) { return enabled ? this.addCls(value) : this.removeCls(value); },
+    };
 }
 function browser({ dom = false } = {}) {
     const classes = new Map(), stack = [], requests = [], siteUpdates = [], warnings = [];
@@ -50,8 +69,12 @@ function browser({ dom = false } = {}) {
             un: (name, callback) => { if (name === 'update') this.updates.delete(callback); },
             remove: () => { throw new Error('Sorting must not remove a record'); } };
         if (dom) {
-            this.inputEl = { dom: window.document.createElement('input') };
-            window.document.createElement('div').appendChild(this.inputEl.dom);
+            const input = window.document.createElement('input'), wrap = window.document.createElement('div');
+            input.className = 'x-form-field x-form-text x-form-text-default';
+            wrap.className = 'x-form-text-wrap x-form-text-wrap-default';
+            wrap.appendChild(input);
+            this.inputEl = extElementFixture(input);
+            this.inputWrap = extElementFixture(wrap);
         }
     }
     Selector.prototype = {
@@ -59,6 +82,8 @@ function browser({ dom = false } = {}) {
         getValue() { return this.selected ? this.selected.get('key') : null; },
         on(name, callback) { const handlers = this.events.get(name) || []; handlers.push(callback); this.events.set(name, handlers); },
         fire(name) { for (const callback of this.events.get(name) || []) callback(); },
+        nativeFocus() { this.inputEl.addCls('x-form-focus'); this.inputWrap.addCls('x-form-text-wrap-focus'); },
+        nativeBlur() { this.inputEl.removeCls('x-form-focus'); this.inputWrap.removeCls('x-form-text-wrap-focus'); },
         setValue() { throw new Error('Sorting must not change combo value'); },
         fireEvent() { throw new Error('Sorting must not fire a select event'); },
         callParent(args) { return stack.at(-1).apply(this, args); },
@@ -292,6 +317,38 @@ test('selected combo icons follow module preferences and asynchronous site updat
     assert.deepEqual(plain(ui.api.get()), defaults);
     selector.fire('beforedestroy');
     assert.equal(selectedIcon.parentNode, null); assert.equal(selector.updates.size, 0);
+});
+
+test('selected icon spacing survives native focus and blur across module, native and URL-site views', () => {
+    const ui = browser({ dom: true }), selector = ui.selector();
+    const module = selector.rows.find((record) => record.get('key') === 'pve-komodo-containers');
+    const native = selector.rows.find((record) => record.get('key') === 'server');
+    const site = selector.rows.find((record) => record.get('key') === siteA);
+    selector.selected = module; selector.fire('afterrender');
+    const selectedIcon = selector._pvePluginSelectedIcon;
+    function checkSpacing(hasIcon) {
+        assert.equal(selector.inputEl.dom.classList.contains('pve-plugin-selector-input'), hasIcon,
+            'native class updates must retain or remove the input padding with the selected icon');
+        assert.equal(selector.inputWrap.dom.classList.contains('pve-plugin-selector-wrap'), true,
+            'native class updates must retain the icon positioning container');
+        assert.equal(selectedIcon.hidden, !hasIcon);
+        assert.equal(selectedIcon.parentNode, selector.inputWrap.dom);
+    }
+    function focusCycle(hasIcon) {
+        checkSpacing(hasIcon);
+        selector.nativeFocus(); checkSpacing(hasIcon);
+        selector.nativeBlur(); checkSpacing(hasIcon);
+    }
+    assert.match(selectedIcon.innerHTML, /fa fa-cubes/);
+    focusCycle(true);
+    selector.selected = native; selector.fire('change');
+    assert.equal(selectedIcon.innerHTML, ''); focusCycle(false);
+    selector.selected = module; selector.fire('change');
+    assert.match(selectedIcon.innerHTML, /fa fa-cubes/); focusCycle(true);
+    site.set('pluginIcon', { type: 'url', value: 'https://icons.example/site.png' });
+    selector.selected = site; selector.fire('change');
+    assert.match(selectedIcon.innerHTML, /https:\/\/icons\.example\/site\.png/); focusCycle(true);
+    selector.selected = native; selector.fire('change'); focusCycle(false);
 });
 
 test('logout cancels requests, resets preferences and ignores late responses across users', () => {
