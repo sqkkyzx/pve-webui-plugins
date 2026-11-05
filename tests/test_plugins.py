@@ -13,12 +13,14 @@ import pytest
 
 from app.main import Settings, create_app
 from app.plugins import Asset, Plugin, PluginHandle, discover_plugins, render_runtime, resolve_plugins
+from scripts.smoke_image import configuration as image_configuration
 from test_app import DESKTOP
 
 
 ROOT = Path(__file__).resolve().parent.parent
 IDS = ("komodo", "temperatures", "sites", "safeline")
-COMBINATIONS = [values for count in range(len(IDS) + 1) for values in combinations(IDS, count)]
+OPTIONAL_IDS = ("komodo", "temperatures", "safeline")
+COMBINATIONS = [values for count in range(len(OPTIONAL_IDS) + 1) for values in combinations(OPTIONAL_IDS, count)]
 PATHS = {
     "komodo": ("/pve-plugins/api/komodo/connection", "/pve-plugins/assets/komodo/extension.js"),
     "temperatures": ("/pve-plugins/api/temperatures/nodes/pve-a", "/pve-plugins/assets/temperatures/temperatures.js"),
@@ -33,18 +35,23 @@ def test_all_plugin_combinations_control_html_api_and_assets(enabled, tmp_path):
         assert request.url.path == "/"
         return httpx.Response(200, content=DESKTOP, headers={"content-type": "text/html"})
 
+    snapshot = image_configuration(enabled)
+    expected = [plugin.id for plugin in resolve_plugins(discover_plugins(), tuple(snapshot["enabled_plugins"]))]
+    config_path = tmp_path / "plugins.json"
+    config_path.write_text(json.dumps(snapshot))
     application = create_app(Settings(
-        "https://pve.example:8006", tls_verify=False, enabled_plugins=enabled,
+        "https://pve.example:8006", tls_verify=False, config_state_file=str(config_path),
         runtime_dir=str(tmp_path / "runtime"), site_state_file=str(tmp_path / "sites.sqlite3"),
     ), transport=httpx.MockTransport(upstream))
     with TestClient(application) as client:
         health = client.get("/pve-plugins/health")
-        assert health.status_code == 200 and health.json()["plugins"] == list(enabled)
+        assert health.status_code == 200 and health.json()["plugins"] == expected
         body = client.get("/").content
         assert b"UserName: 'alice@pve', CSRFPreventionToken: 'csrf-value'" in body
-        assert (b"pve-webui-plugins:begin" in body) == bool(enabled)
+        assert b"pve-webui-plugins:begin" in body
+        assert b"/assets/core/manager.js" in body
         for plugin_id, (api, asset) in PATHS.items():
-            active = plugin_id in enabled
+            active = plugin_id in expected
             assert client.get(api).status_code == (401 if active else 404)
             assert client.get(asset).status_code == (200 if active else 404)
             assert client.head(asset).status_code == (200 if active else 404)
@@ -69,10 +76,9 @@ def test_all_plugin_combinations_control_html_api_and_assets(enabled, tmp_path):
         assert client.get("/pve-plugins/api/plugins").status_code == 401
         assert client.get("/?pve-plugins=off").content == DESKTOP
     generated = json.loads((tmp_path / "runtime/plugins.json").read_text())
-    assert generated["enabled"] == list(enabled)
+    assert generated["enabled"] == expected
     head = (tmp_path / "runtime/desktop-head.html").read_bytes()
-    if enabled:
-        assert head in body
+    assert head in body
     assert not (tmp_path / "sites.sqlite3").exists(), "anonymous requests must not open plugin storage"
 
 
@@ -82,6 +88,7 @@ def test_disabled_plugin_packages_are_not_imported_in_fresh_process(enabled, tmp
 import sys
 from app.main import Settings, create_app
 ids = tuple(sys.argv[1].split(',')) if sys.argv[1] else ()
+ids = tuple(dict.fromkeys((*ids, "sites")))
 app = create_app(Settings('https://pve.example:8006', tls_verify=False, enabled_plugins=ids))
 for name in ('komodo', 'temperatures', 'sites', 'safeline'):
     assert ('plugins.' + name + '.plugin' in sys.modules) == (name in ids)
@@ -93,9 +100,11 @@ for name in ('komodo', 'temperatures', 'sites', 'safeline'):
     assert result.returncode == 0, result.stderr
 
 
-def test_environment_can_select_no_plugins_and_ignores_disabled_plugin_configuration(monkeypatch, tmp_path):
-    monkeypatch.setenv("PVE_UPSTREAM", "https://pve.example:8006")
-    monkeypatch.setenv("PVE_PLUGINS", "")
+def test_environment_defaults_to_builtin_sites_and_ignores_module_configuration(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PVE_UPSTREAM", "192.0.2.1,192.0.2.2")
+    monkeypatch.delenv("PVE_PLUGINS_DATA_DIR", raising=False)
+    monkeypatch.setenv("PVE_PLUGINS", "komodo,temperatures,safeline")
     monkeypatch.setenv("PVE_KOMODO_URL", "invalid-origin")
     monkeypatch.setenv("PVE_KOMODO_TLS_VERIFY", "invalid-but-unused")
     monkeypatch.setenv("PVE_TEMPERATURES_SOURCES_FILE", str(tmp_path / "missing.json"))
@@ -103,9 +112,12 @@ def test_environment_can_select_no_plugins_and_ignores_disabled_plugin_configura
     monkeypatch.setenv("SAFELINE_API_TOKEN", "invalid\nheader")
     monkeypatch.setenv("SAFELINE_STATE_FILE", str(tmp_path / "must-not-be-opened" / "connection.sqlite3"))
     config = Settings.from_env()
-    assert config.enabled_plugins == ()
+    assert config.upstreams == ("https://192.0.2.1:8006", "https://192.0.2.2:8006")
+    assert config.tls_verify is False
+    assert config.enabled_plugins == ("sites",)
+    assert config.komodo_url is config.komodo_api_key is config.komodo_api_secret is None
     with TestClient(create_app(config)) as client:
-        assert client.get("/pve-plugins/health").json()["plugins"] == []
+        assert client.get("/pve-plugins/health").json()["plugins"] == ["sites"]
 
 
 def test_plugin_metadata_requires_pve_auth_and_generated_templates_never_contain_credentials(monkeypatch, tmp_path):
@@ -149,7 +161,7 @@ def test_optional_order_does_not_enable_a_dependency_but_still_detects_cycles():
         resolve_plugins(catalog, ("a", "b"))
 
 
-def test_sites_wraps_container_tree_even_if_environment_lists_sites_first():
+def test_sites_wraps_container_tree_even_if_configuration_lists_sites_first():
     app = create_app(Settings("https://pve.example:8006", tls_verify=False, enabled_plugins=("sites", "komodo")),
                      transport=httpx.MockTransport(lambda request: httpx.Response(
                          200, content=DESKTOP, headers={"content-type": "text/html"})))
@@ -211,8 +223,9 @@ def test_shutdown_runs_in_reverse_order_even_if_one_plugin_fails(monkeypatch):
                 raise RuntimeError("test shutdown failure")
         return PluginHandle(shutdown=shutdown)
 
-    monkeypatch.setattr("app.main.load_plugin", load)
-    app = create_app(Settings("https://pve.example:8006", tls_verify=False))
+    monkeypatch.setattr("app.plugin_runtime.load_plugin", load)
+    app = create_app(Settings("https://pve.example:8006", tls_verify=False,
+                              enabled_plugins=("komodo", "temperatures", "sites")))
 
     async def scenario():
         with pytest.raises(ExceptionGroup):
@@ -247,11 +260,11 @@ def setup(context):
     return PluginHandle()
 ''')
     monkeypatch.setattr(plugins, "__path__", [*plugins.__path__, str(tmp_path)])
-    catalog = discover_plugins(tmp_path)
+    catalog = {**discover_plugins(), **discover_plugins(tmp_path)}
     monkeypatch.setattr("app.main.discover_plugins", lambda: catalog)
     app = create_app(Settings("https://pve.example:8006", enabled_plugins=("sample",), tls_verify=False))
     with TestClient(app) as client:
-        assert client.get("/pve-plugins/health").json()["plugins"] == ["sample"]
+        assert client.get("/pve-plugins/health").json()["plugins"] == ["sample", "sites"]
         assert client.get("/pve-plugins/api/sample/status").status_code == 401
         assert client.get("/pve-plugins/assets/sample/sample.js").text == "window.samplePluginLoaded = true;\n"
 
@@ -282,31 +295,45 @@ def test_old_bypass_and_response_header_are_removed():
         assert client.get("/?pve-plugins=off").content == DESKTOP
 
 
-def test_settings_use_only_current_environment_names(monkeypatch):
-    for name in ("PVE_KOMODO_URL", "PVE_KOMODO_API_KEY", "PVE_KOMODO_API_SECRET",
-                 "PVE_KOMODO_TLS_VERIFY", "PVE_PLUGINS_INJECTION_ENABLED",
-                 "PVE_PLUGINS_RUNTIME_DIR", "PVE_KOMODO_ACTION_STATE_FILE",
-                 "PVE_KOMODO_GUEST_LINKS_FILE", "PVE_SITES_STATE_FILE",
-                 "PVE_TEMPERATURES_SOURCES_FILE"):
+def test_settings_environment_only_controls_infrastructure(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    for name in ("PVE_PLUGINS_INJECTION_ENABLED", "PVE_PLUGINS_RUNTIME_DIR", "PVE_PLUGINS_DATA_DIR",
+                 "PVE_ADMIN_USERS", "PVE_TLS_VERIFY", "PVE_CA_FILE"):
         monkeypatch.delenv(name, raising=False)
-    for name,value in {"PVE_UPSTREAM": "https://pve.example:8006", "PVE_PLUGINS": "sites",
-                       "KOMODO_URL": "http://old.invalid:9120", "KOMODO_API_KEY": "old-key",
-                       "KOMODO_API_SECRET": "old-secret", "KOMODO_TLS_VERIFY": "invalid",
-                       "PVE_EXTENSION_ENABLED": "false", "PVE_RUNTIME_DIR": "/old/runtime",
-                       "PVE_ACTION_STATE_FILE": "/old/actions", "PVE_GUEST_LINKS_FILE": "/old/links",
-                       "PVE_SITES_FILE": "/old/sites", "PVE_TEMPERATURE_SOURCES_FILE": "/old/temperatures"}.items():
+    for name, value in {
+        "PVE_UPSTREAM": "192.0.2.1", "PVE_PLUGINS": "komodo,temperatures,safeline",
+        "PVE_KOMODO_URL": "invalid-origin", "PVE_KOMODO_API_KEY": "ignored-key",
+        "PVE_KOMODO_API_SECRET": "ignored-secret", "PVE_KOMODO_TLS_VERIFY": "invalid",
+        "PVE_PLUGINS_CONFIG_FILE": "/removed/config", "PVE_KOMODO_ACTION_STATE_FILE": "/removed/actions",
+        "PVE_KOMODO_GUEST_LINKS_FILE": "/removed/links", "PVE_SITES_STATE_FILE": "/removed/sites",
+        "PVE_TEMPERATURES_SOURCES_FILE": "/removed/temperatures", "SAFELINE_STATE_FILE": "/removed/safeline",
+        "SAFELINE_URL": "invalid-origin", "SAFELINE_API_TOKEN": "ignored-token",
+    }.items():
         monkeypatch.setenv(name,value)
     config = Settings.from_env()
+    assert config.upstreams == ("https://192.0.2.1:8006",) and config.tls_verify is False
     assert config.injection_enabled is True and config.runtime_dir is None
+    assert config.enabled_plugins == ("sites",)
     assert config.komodo_url is config.komodo_api_key is config.komodo_api_secret is None
-    assert config.action_state_file is config.guest_links_file is config.site_state_file is config.temperature_sources_file is None
-    for name,value in {"PVE_KOMODO_URL": "http://core:9120", "PVE_KOMODO_API_KEY": "new-key",
-                       "PVE_KOMODO_API_SECRET": "new-secret", "PVE_PLUGINS_INJECTION_ENABLED": "false",
-                       "PVE_PLUGINS_RUNTIME_DIR": "/new/runtime", "PVE_KOMODO_ACTION_STATE_FILE": "/new/actions",
-                       "PVE_KOMODO_GUEST_LINKS_FILE": "/new/links", "PVE_SITES_STATE_FILE": "/new/sites",
-                       "PVE_TEMPERATURES_SOURCES_FILE": "/new/temperatures"}.items():
+    assert config.config_state_file == str(tmp_path / "data/plugins.json")
+    assert config.action_state_file == str(tmp_path / "data/actions.sqlite3")
+    assert config.guest_links_file == str(tmp_path / "data/guest-links.sqlite3")
+    assert config.site_state_file == str(tmp_path / "data/sites.sqlite3")
+    assert config.safeline_state_file == str(tmp_path / "data/safeline.sqlite3")
+    assert config.temperature_sources_file is None
+    directory = tmp_path / "custom-data"
+    for name, value in {
+        "PVE_PLUGINS_DATA_DIR": str(directory), "PVE_PLUGINS_INJECTION_ENABLED": "false",
+        "PVE_PLUGINS_RUNTIME_DIR": "/internal/runtime", "PVE_ADMIN_USERS": "admin@pve, root@pam",
+        "PVE_TLS_VERIFY": "false",
+    }.items():
         monkeypatch.setenv(name,value)
     config = Settings.from_env()
-    assert config.injection_enabled is False and config.runtime_dir == "/new/runtime"
-    assert (config.komodo_url,config.komodo_api_key,config.komodo_api_secret) == ("http://core:9120","new-key","new-secret")
-    assert (config.action_state_file,config.guest_links_file,config.site_state_file,config.temperature_sources_file) == ("/new/actions","/new/links","/new/sites","/new/temperatures")
+    assert config.injection_enabled is False and config.runtime_dir == "/internal/runtime"
+    assert config.admin_users == ("admin@pve", "root@pam") and config.tls_verify is False
+    assert config.config_state_file == str(directory / "plugins.json")
+    assert config.action_state_file == str(directory / "actions.sqlite3")
+    assert config.guest_links_file == str(directory / "guest-links.sqlite3")
+    assert config.site_state_file == str(directory / "sites.sqlite3")
+    assert config.safeline_state_file == str(directory / "safeline.sqlite3")
+    assert config.komodo_url is config.komodo_api_key is config.komodo_api_secret is None

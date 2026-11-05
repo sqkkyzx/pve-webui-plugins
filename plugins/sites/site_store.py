@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 import ipaddress
+import json
 from pathlib import Path
 import re
 import sqlite3
@@ -11,11 +12,15 @@ import uuid
 
 import httpx
 
+from app.icons import validate_icon
+
 
 _ID = re.compile(r"[0-9a-f]{32}\Z")
 _HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z")
 _MAX_REVISION = 9_007_199_254_740_991
 _MAX_SITES = 100
+_UNSET = object()
+_COLUMNS = "id,name,url,revision,enabled,alias,icon"
 
 
 class SiteError(Exception):
@@ -35,6 +40,34 @@ def _name(value):
     if not 1 <= len(value) <= 100:
         raise SiteError("invalid_site_name", 422)
     return value
+
+
+def _enabled(value):
+    if type(value) is not bool:
+        raise SiteError("invalid_site_enabled", 422)
+    return value
+
+
+def _alias(value):
+    if not isinstance(value, str) or _controls(value):
+        raise SiteError("invalid_site_alias", 422)
+    value = value.strip()
+    if len(value) > 100:
+        raise SiteError("invalid_site_alias", 422)
+    return value
+
+
+def _icon(value):
+    if value is None:
+        return None
+    try:
+        return validate_icon(value)
+    except (ValueError, TypeError):
+        raise SiteError("invalid_site_icon", 422) from None
+
+
+def _icon_json(value):
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=True) if value is not None else None
 
 
 def _url(value):
@@ -94,11 +127,14 @@ def _revision(value):
 def _row(row):
     try:
         result = {"id": _site_id(row["id"]), "name": _name(row["name"]),
-                  "url": _url(row["url"]), "revision": _revision(row["revision"])}
-        if result["name"] != row["name"] or result["url"] != row["url"]:
+                  "url": _url(row["url"]), "revision": _revision(row["revision"]),
+                  "enabled": bool(row["enabled"]), "alias": _alias(row["alias"]),
+                  "icon": _icon(json.loads(row["icon"])) if row["icon"] is not None else None}
+        if (result["name"] != row["name"] or result["url"] != row["url"] or result["alias"] != row["alias"]
+                or type(row["enabled"]) is not int or row["enabled"] not in (0, 1)):
             raise ValueError
         return result
-    except (SiteError, ValueError, TypeError, KeyError, IndexError):
+    except (SiteError, ValueError, TypeError, KeyError, IndexError, RecursionError):
         raise SiteError("site_store_unavailable") from None
 
 
@@ -122,12 +158,15 @@ class SitesStore:
             connection.row_factory = sqlite3.Row
             connection.execute("BEGIN IMMEDIATE")
             connection.execute("CREATE TABLE IF NOT EXISTS site_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            connection.execute("CREATE TABLE IF NOT EXISTS sites (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, revision INTEGER NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS sites (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, revision INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, alias TEXT NOT NULL DEFAULT '', icon TEXT)")
             pinned = connection.execute("SELECT value FROM site_metadata WHERE key='pve_origin'").fetchone()
             if pinned is None:
                 connection.execute("INSERT INTO site_metadata (key,value) VALUES ('pve_origin',?)", (self.pve_origin,))
             elif pinned["value"] != self.pve_origin:
                 raise SiteError("pve_instance_mismatch")
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(sites)")}
+            if columns != set(_COLUMNS.split(",")):
+                raise SiteError("unsupported_site_schema")
             connection.commit()
             self._connection = connection
             return connection
@@ -158,42 +197,51 @@ class SitesStore:
     def list(self):
         with self._lock:
             try:
-                rows = self._db().execute("SELECT id,name,url,revision FROM sites ORDER BY rowid LIMIT 101").fetchall()
+                rows = self._db().execute(f"SELECT {_COLUMNS} FROM sites ORDER BY rowid LIMIT 101").fetchall()
                 if len(rows) > _MAX_SITES:
                     raise SiteError("site_store_unavailable")
                 return [_row(row) for row in rows]
             except sqlite3.Error:
                 raise SiteError("site_store_unavailable") from None
 
-    def create(self, name, url):
+    def create(self, name, url, *, enabled=True, alias="", icon=None):
         name, url = _name(name), _url(url)
+        enabled, alias, icon = _enabled(enabled), _alias(alias), _icon(icon)
         with self._transaction() as connection:
             count = connection.execute("SELECT COUNT(*) FROM sites").fetchone()[0]
             if count >= _MAX_SITES:
                 raise SiteError("site_limit_reached", 409)
-            site = {"id": uuid.uuid4().hex, "name": name, "url": url, "revision": 1}
-            connection.execute("INSERT INTO sites (id,name,url,revision) VALUES (?,?,?,?)",
-                               (site["id"], name, url, 1))
+            site = {"id": uuid.uuid4().hex, "name": name, "url": url, "revision": 1,
+                    "enabled": enabled, "alias": alias, "icon": icon}
+            connection.execute("INSERT INTO sites (id,name,url,revision,enabled,alias,icon) VALUES (?,?,?,?,?,?,?)",
+                               (site["id"], name, url, 1, int(enabled), alias, _icon_json(icon)))
             return site
 
-    def update(self, site_id, name, url, *, expected_revision):
+    def update(self, site_id, name=_UNSET, url=_UNSET, *, expected_revision,
+               enabled=_UNSET, alias=_UNSET, icon=_UNSET):
         site_id, revision = _site_id(site_id), _revision(expected_revision)
-        name, url = _name(name), _url(url)
+        changes = {}
+        for field, value, validate in (("name", name, _name), ("url", url, _url),
+                                       ("enabled", enabled, _enabled), ("alias", alias, _alias), ("icon", icon, _icon)):
+            if value is not _UNSET:
+                changes[field] = validate(value)
         with self._transaction() as connection:
-            current = connection.execute("SELECT id,name,url,revision FROM sites WHERE id=?", (site_id,)).fetchone()
+            current = connection.execute(f"SELECT {_COLUMNS} FROM sites WHERE id=?", (site_id,)).fetchone()
             if current is None:
                 raise SiteError("site_not_found", 404)
             current = _row(current)
             if current["revision"] != revision or revision == _MAX_REVISION:
                 raise SiteError("site_revision_conflict", 409)
-            connection.execute("UPDATE sites SET name=?,url=?,revision=? WHERE id=? AND revision=?",
-                               (name, url, revision + 1, site_id, revision))
-            return {"id": site_id, "name": name, "url": url, "revision": revision + 1}
+            site = {**current, **changes, "revision": revision + 1}
+            connection.execute("UPDATE sites SET name=?,url=?,revision=?,enabled=?,alias=?,icon=? WHERE id=? AND revision=?",
+                               (site["name"], site["url"], site["revision"], int(site["enabled"]), site["alias"],
+                                _icon_json(site["icon"]), site_id, revision))
+            return site
 
     def delete(self, site_id, *, expected_revision):
         site_id, revision = _site_id(site_id), _revision(expected_revision)
         with self._transaction() as connection:
-            current = connection.execute("SELECT id,name,url,revision FROM sites WHERE id=?", (site_id,)).fetchone()
+            current = connection.execute(f"SELECT {_COLUMNS} FROM sites WHERE id=?", (site_id,)).fetchone()
             if current is None:
                 raise SiteError("site_not_found", 404)
             if _row(current)["revision"] != revision:

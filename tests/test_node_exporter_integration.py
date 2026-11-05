@@ -76,7 +76,7 @@ def integration(monkeypatch):
     def forbidden(request):
         pytest.fail("Temperature request must not contact Komodo or the HTML upstream")
 
-    settings = Settings(PVE, action_state_file=":memory:", guest_links_file=":memory:")
+    settings = Settings(PVE, enabled_plugins=("temperatures",), action_state_file=":memory:", guest_links_file=":memory:")
     assert settings.temperature_sources_file is None and settings.komodo_url is None
     app = create_app(settings, transport=httpx.MockTransport(forbidden), pve_auth_transport=httpx.MockTransport(pve),
                      komodo_transport=httpx.MockTransport(forbidden), temperature_transport=httpx.MockTransport(exporter))

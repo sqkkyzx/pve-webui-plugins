@@ -50,7 +50,7 @@ def boundary(monkeypatch,tmp_path):
     monkeypatch.setattr(routes,'get_stack_logs',logs)
     monkeypatch.setattr(routes,'update_stack_details',write)
     monkeypatch.setattr(KomodoClient,'perform_action',action)
-    client=TestClient(create_app(Settings('https://pve.example:8006',komodo_url='http://core:9120',
+    client=TestClient(create_app(Settings('https://pve.example:8006', enabled_plugins=("komodo",),komodo_url='http://core:9120',
         komodo_api_key='private-key',komodo_api_secret='private-secret',action_state_file=str(ledger))))
     response=client.get(PATH,headers=COOKIE)
     assert response.status_code==200

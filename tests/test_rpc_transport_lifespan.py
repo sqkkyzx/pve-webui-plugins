@@ -12,6 +12,7 @@ from app.main import Settings, create_app
 def settings(**changes):
     values = {
         "upstream": "https://pve.example:8006",
+        "enabled_plugins": ("komodo",),
         "tls_verify": False,
         "komodo_url": "http://komodo.example:9120",
         "komodo_api_key": "test-key",

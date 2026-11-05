@@ -102,8 +102,7 @@ def security(tmp_path, monkeypatch):
             result = state["listing"] if state["listing"] is not None else {"data": values[offset:offset + size], "total": len(values)}
         return httpx.Response(200, json={"data": copy.deepcopy(result), "err": ""})
 
-    monkeypatch.setenv("SAFELINE_STATE_FILE", str(tmp_path / "security.sqlite3"))
-    app = create_app(Settings(PVE, enabled_plugins=("safeline",)), pve_auth_transport=pve_transport(state),
+    app = create_app(Settings(PVE, enabled_plugins=("safeline",), safeline_state_file=str(tmp_path / "security.sqlite3")), pve_auth_transport=pve_transport(state),
                      plugin_transports={"safeline": httpx.MockTransport(handler)})
     with TestClient(app) as client: yield client, state
 

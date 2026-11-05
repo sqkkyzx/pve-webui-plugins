@@ -66,7 +66,7 @@ def boundary(monkeypatch, tmp_path):
     monkeypatch.setattr(GuestBoundOptionsService, "resolve", resolve)
     monkeypatch.setattr(routes, "get_server_inventory", read)
     monkeypatch.setattr(routes, "perform_inventory_action", write)
-    client = TestClient(create_app(Settings("https://pve.example:8006", komodo_url="http://core:9120",
+    client = TestClient(create_app(Settings("https://pve.example:8006", enabled_plugins=("komodo",), komodo_url="http://core:9120",
         komodo_api_key="key", komodo_api_secret="secret", action_state_file=str(ledger))))
     result = client.get(BASE + "/docker", headers={"cookie": COOKIE})
     assert result.status_code == 200
@@ -254,7 +254,7 @@ def test_full_transport_chain_verifies_pve_fingerprint_after_permissions_before_
         }[variant]
         return httpx.Response(200, json=data)
 
-    application = create_app(Settings(pve_origin, komodo_url=core_origin, komodo_api_key="key", komodo_api_secret="secret",
+    application = create_app(Settings(pve_origin, enabled_plugins=("komodo",), komodo_url=core_origin, komodo_api_key="key", komodo_api_secret="secret",
         action_state_file=str(ledger), guest_links_file=str(tmp_path / "links.sqlite3")),
         pve_auth_transport=httpx.MockTransport(pve), komodo_transport=httpx.MockTransport(core))
     with TestClient(application) as browser:

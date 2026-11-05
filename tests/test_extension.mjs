@@ -2638,7 +2638,7 @@ test('container view appends one state-restorable selector option and uses an in
     const selector = browser.Ext.create('PVE.form.ViewSelector');
     assert.deepEqual(selector.store.data.map((row) => row.key), ['server', 'folder', 'pool', 'tags', 'pve-komodo-containers']);
     selector.applyState('pve-komodo-containers'); assert.equal(selector.getViewFilter().id, 'pve-komodo-containers');
-    assert.equal(selector.store.data.at(-1).value, '容器视图');
+    assert.equal(selector.store.data.at(-1).value, 'Komodo');
     assert.equal(view.native.ownerCt.items.length, 2); assert.equal(view.tree.hidden, true);
     assert.equal(view.tree.storeConfig.model, 'Ext.data.TreeModel'); assert.equal(view.tree.stateful, false);
     assert.equal(browser.Ext.requests.length, 0); assert.equal(browser.Ext.guestRequests.length, 0);

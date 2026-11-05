@@ -130,10 +130,9 @@ def application_fixture():
 @pytest.fixture
 def pages(tmp_path, monkeypatch):
     path=tmp_path/'private'/'connection.sqlite3'
-    monkeypatch.setenv('SAFELINE_STATE_FILE',str(path))
     for key in ('SAFELINE_URL','SAFELINE_API_TOKEN'):monkeypatch.delenv(key,raising=False)
     state,transport=application_fixture()
-    app=create_app(Settings(PVE,enabled_plugins=('safeline',)),pve_auth_transport=pve_transport(state),plugin_transports={'safeline':transport})
+    app=create_app(Settings(PVE,enabled_plugins=('safeline',),safeline_state_file=str(path)),pve_auth_transport=pve_transport(state),plugin_transports={'safeline':transport})
     with TestClient(app) as client:yield client,state,path
 
 

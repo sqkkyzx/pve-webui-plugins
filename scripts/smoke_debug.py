@@ -32,7 +32,7 @@ def verify(image):
         "docker", "compose", "--project-directory", str(ROOT),
         "-f", str(ROOT / "compose.yaml"), "-f", str(ROOT / "compose.debug.yaml"),
         "config", "--format", "json",
-    ], env={**os.environ, "PVE_UPSTREAM": "https://pve.invalid:8006"},
+    ], env={**os.environ, "PVE_UPSTREAM": "192.0.2.1"},
         capture_output=True, text=True, check=True, timeout=30)
     config = json.loads(command.stdout)["services"]["pve-webui-plugins"]
     assert config["build"]["target"] == "debug"
@@ -49,15 +49,21 @@ def verify(image):
             (source / directory).chmod(0o755)
             mounts.extend(["--mount", f"type=bind,source={source / directory},target=/app/{directory},readonly"])
         docker("run", "--detach", "--name", name, "--read-only", "--cap-drop=ALL",
+               "--memory=384m", "--pids-limit=128",
                "--security-opt=no-new-privileges:true",
-               "--tmpfs", "/run/pve-webui-plugins:rw,noexec,nosuid,size=1m,uid=10001,gid=10001,mode=0700",
-               "--publish", "127.0.0.1::8000", "--env", "PVE_UPSTREAM=https://pve.invalid:8006",
-               "--env", "PVE_PLUGINS=sites", "--env", "WATCHFILES_FORCE_POLLING=true",
+               "--tmpfs", "/run/pve-webui-plugins:rw,noexec,nosuid,size=8m,uid=10001,gid=10001,mode=0700",
+               "--tmpfs", "/app/data:rw,noexec,nosuid,size=1m,uid=10001,gid=10001,mode=0700",
+               "--publish", "127.0.0.1::8008", "--env", "PVE_UPSTREAM=192.0.2.1",
+               "--env", "WATCHFILES_FORCE_POLLING=true",
                *mounts, image, *config["command"])
         try:
-            port = docker("port", name, "8000/tcp").splitlines()[0].rpartition(":")[2]
+            port = docker("port", name, "8008/tcp").splitlines()[0].rpartition(":")[2]
             base = "http://127.0.0.1:" + port
             wait_for(lambda: fetch(base, "/pve-plugins/health")[0] == 200, "startup")
+            assert json.loads(fetch(base, "/pve-plugins/health")[1])["plugins"] == ["sites"]
+            assert docker("exec", name, "python", "-c",
+                          "from pathlib import Path; assert all(Path('/app', name).is_file() "
+                          "for name in ('LICENSE', 'NOTICE.md')); print('ok')") == "ok"
 
             def generated(filename):
                 return docker("exec", name, "python", "-c",
@@ -89,7 +95,7 @@ def verify(image):
             print(docker("logs", name), flush=True)
             raise
         finally:
-            subprocess.run(["docker", "rm", "--force", name], check=False, capture_output=True, timeout=15)
+            subprocess.run(["docker", "rm", "--force", name], check=False, capture_output=True, timeout=60)
 
 
 if __name__ == "__main__":

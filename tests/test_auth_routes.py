@@ -19,7 +19,7 @@ def client_for(*, pve=None, komodo=None, configured=True, allowed=("root@pam",))
 
     return TestClient(create_app(
         Settings(
-            "https://pve.example:8006", admin_users=allowed,
+            "https://pve.example:8006", enabled_plugins=("komodo",), admin_users=allowed,
             komodo_url="http://komodo.example:9120" if configured else None,
             komodo_api_key="test-key" if configured else None,
             komodo_api_secret="test-secret" if configured else None,
@@ -135,20 +135,19 @@ def test_no_write_endpoints(route):
     assert "no-store" in response.headers["cache-control"]
 
 
-def test_settings_load_new_environment_without_showing_credentials(monkeypatch):
+def test_settings_load_only_base_environment_and_hide_explicit_credentials(monkeypatch):
     for name, value in {
-        "PVE_UPSTREAM": "https://pve.example:8006", "PVE_ADMIN_USERS": "root@pam, alice@pve",
+        "PVE_UPSTREAM": "192.0.2.10", "PVE_ADMIN_USERS": "root@pam, alice@pve",
         "PVE_KOMODO_URL": "http://core:9120", "PVE_KOMODO_API_KEY": "test-key",
         "PVE_KOMODO_API_SECRET": "test-secret", "PVE_KOMODO_TLS_VERIFY": "false",
     }.items():
         monkeypatch.setenv(name, value)
     settings = Settings.from_env()
     assert settings.admin_users == ("root@pam", "alice@pve")
-    assert settings.komodo_url == "http://core:9120"
-    assert settings.komodo_api_key == "test-key"
-    assert settings.komodo_api_secret == "test-secret"
-    assert settings.komodo_tls_verify is False
-    assert "test-key" not in repr(settings) and "test-secret" not in repr(settings)
+    assert settings.komodo_url is settings.komodo_api_key is settings.komodo_api_secret is None
+    assert settings.komodo_tls_verify is True
+    injected = Settings("https://pve.example:8006", komodo_api_key="test-key", komodo_api_secret="test-secret")
+    assert "test-key" not in repr(injected) and "test-secret" not in repr(injected)
     monkeypatch.setenv("PVE_ADMIN_USERS", "")
     assert Settings.from_env().admin_users == ()
 

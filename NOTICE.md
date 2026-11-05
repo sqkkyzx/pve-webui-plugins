@@ -22,3 +22,8 @@ or fetch a moving upstream schema at test time.
 Proxmox VE's ExtJS components and xterm.js are loaded from the user's existing
 PVE installation; they are not vendored here. Node exporter is an optional
 external data source and is not bundled into the extension image.
+
+The Docker image includes Debian's Nginx and OpenSSL packages for the optional
+HTTPS gateway and its initial self-signed certificate. Their upstream license
+and copyright notices are retained in `/usr/share/doc/nginx/copyright` and
+`/usr/share/doc/openssl/copyright` in the image.

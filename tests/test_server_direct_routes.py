@@ -25,7 +25,7 @@ COOKIE = "PVEAuthCookie=test-ticket"
 @pytest.fixture
 def direct(monkeypatch, tmp_path):
     ledger, links_path = tmp_path / "actions.sqlite3", tmp_path / "links.sqlite3"
-    settings = Settings("https://pve.example:8006", komodo_url="http://core:9120", komodo_api_key="key",
+    settings = Settings("https://pve.example:8006", enabled_plugins=("komodo",), komodo_url="http://core:9120", komodo_api_key="key",
                         komodo_api_secret="secret", action_state_file=str(ledger), guest_links_file=str(links_path))
     store = GuestLinkStore(str(links_path), komodo_origin=settings.komodo_url, pve_origin=settings.upstream)
     state = {"reads": [], "writes": [], "bind_on_read": False, "bind_on_write": False, "error": None, "unknown": False}

@@ -181,7 +181,7 @@ def integrated(tmp_path):
             "set-cookie": "private-upstream-cookie=must-not-replay; Path=/",
         })
 
-    application = create_app(Settings(PVE, komodo_url=KOMODO, komodo_api_key=KEY, komodo_api_secret=SECRET,
+    application = create_app(Settings(PVE, enabled_plugins=("komodo",), komodo_url=KOMODO, komodo_api_key=KEY, komodo_api_secret=SECRET,
                                       action_state_file=str(actions_file), guest_links_file=str(links_file)),
                              pve_auth_transport=httpx.MockTransport(pve), komodo_transport=httpx.MockTransport(komodo))
     with TestClient(application) as browser:

@@ -65,7 +65,7 @@ def boundary(monkeypatch, tmp_path):
     monkeypatch.setattr(GuestBoundOptionsService, "resolve", resolve)
     monkeypatch.setattr(KomodoClient, "server_options", read)
     monkeypatch.setattr(KomodoClient, "update_server_options", write)
-    settings = Settings("https://pve.example:8006", komodo_url="http://core:9120",
+    settings = Settings("https://pve.example:8006", enabled_plugins=("komodo",), komodo_url="http://core:9120",
                         komodo_api_key="key", komodo_api_secret="secret", action_state_file=str(ledger))
     client = TestClient(create_app(settings))
     response = client.get(PATH, headers={"cookie": COOKIE})

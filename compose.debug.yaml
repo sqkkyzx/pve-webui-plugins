@@ -17,9 +17,11 @@ services:
       - --host
       - 0.0.0.0
       - --port
-      - '8000'
+      - '8008'
       - --no-access-log
       - --no-proxy-headers
+      - --timeout-graceful-shutdown
+      - '15'
       - --reload
       - --reload-dir
       - /app/app

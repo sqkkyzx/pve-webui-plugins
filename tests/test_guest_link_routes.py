@@ -61,7 +61,7 @@ def fixture(tmp_path, *, configured=True):
         return httpx.Response(state["komodo_status"], json=state["servers"])
 
     settings = Settings(
-        "https://pve.example:8006", komodo_url="http://komodo.example:9120",
+        "https://pve.example:8006", enabled_plugins=("komodo",), komodo_url="http://komodo.example:9120",
         komodo_api_key="key", komodo_api_secret="secret",
         guest_links_file=str(tmp_path / "guest-links.sqlite3") if configured else None,
     )

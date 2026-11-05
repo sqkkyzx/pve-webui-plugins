@@ -1,6 +1,6 @@
 # SafeLine WAF 插件設計草案
 
-狀態：第一階段已實作；後續 WAF 寫入及進階能力仍為設計。調研及實作日期：2026-10-18。
+本文保留最初架構與接口調研，並持續補充後續實作。0.14.0 透過統一管理頁啟用及設定 SafeLine，已實作的讀取、編輯與操作以現行路由、測試及管理頁為準。各目標版本與授權能力需分別驗收。
 
 ## 依據與驗證範圍
 
@@ -282,7 +282,7 @@ plugins/safeline/
 
 可使用 `after: ["komodo", "sites"]` 安排共用視圖 hook 的可選載入順序；這不會啟用或依賴這兩個插件。切換時，各插件只管理自己擁有的資源樹、頁內左邊欄、頁面與請求，保留原始 hook；需驗證與容器視圖、附加站點視圖來回切換時，不殘留側欄、不重複觸發選取，也不串用資料。
 
-建議明確啟用：`PVE_PLUGINS=komodo,temperatures,sites,safeline`。保留既有預設組合，避免既有安裝升級後自動新增外部接入。
+首次部署只啟用內建附加站點。在「--插件-- → 模块与站点」啟用 SafeLine WAF，再於模組配置中設定管理地址、Token 及 TLS。
 
 ### 在頁面設定連線
 
@@ -293,14 +293,10 @@ plugins/safeline/
 - 設定保存在資料卷的 SQLite；檔案 `0600`、新建目錄 `0700`，採檔案權限保護，未宣稱資料庫本身已加密。前端只取得 Token 已設定標記，不回填原文，不使用 localStorage／sessionStorage；參考 [OWASP 瀏覽器儲存指引](https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html#local-storage)。
 - 讀取與編輯均沿用 PVE 管理者白名單與會話；測試、保存及清除另驗證來源、CSRF 與設定修訂。
 - 留空僅沿用同一地址及同一憑證主機名的已存 Token；變更目標需要重新填寫。
-- 保存後清除舊資源、選取及未完成請求。設定衝突不自動覆蓋；頁面保存優先於部署初始值，清除記錄不會重新啟用環境憑據。
+- 保存後清除舊資源、選取及未完成請求。設定衝突不自動覆蓋；設定由管理頁持久化，清除記錄後重新透過管理頁建立連線。
 - 可分開填寫連線 IP 與憑證主機名，使用 [HTTPX SNI extension](https://www.python-httpx.org/advanced/extensions/#sni_hostname)保持 TLS 驗證；不修改 DNS 或主機 hosts。
 
-| 可選部署設定 | 用途 |
-| --- | --- |
-| `SAFELINE_URL`、`SAFELINE_API_TOKEN` | 尚未保存記錄時的初始連線；非必填 |
-| `SAFELINE_CA_FILE`、`SAFELINE_TLS_SERVER_NAME` | 初始 CA 檔案及憑證主機名；均可在頁面填寫 |
-| `SAFELINE_STATE_FILE` | 設定 SQLite；Compose 為 `/app/data/safeline/connection.sqlite3` |
+SafeLine 連線與 Token 保存在統一 `PVE_PLUGINS_DATA_DIR` 內的 `safeline.sqlite3`，預設為 `/app/data/safeline.sqlite3`。宿主基礎環境設定與外部服務連線分開管理。
 
 ### 已實作路由
 

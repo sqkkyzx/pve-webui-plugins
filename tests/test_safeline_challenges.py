@@ -61,8 +61,7 @@ def challenges(tmp_path, monkeypatch):
             value = {"data": items[offset:offset + int(params["page_size"])], "total": len(items)}
         return httpx.Response(200, json={"data": copy.deepcopy(value), "err": ""})
 
-    monkeypatch.setenv("SAFELINE_STATE_FILE", str(tmp_path / "challenges.sqlite3"))
-    app = create_app(Settings(PVE, enabled_plugins=("safeline",)), pve_auth_transport=pve_transport(state),
+    app = create_app(Settings(PVE, enabled_plugins=("safeline",), safeline_state_file=str(tmp_path / "challenges.sqlite3")), pve_auth_transport=pve_transport(state),
                      plugin_transports={"safeline": httpx.MockTransport(handler)})
     with TestClient(app) as client:
         yield client, state

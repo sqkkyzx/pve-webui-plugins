@@ -4,7 +4,7 @@ import asyncio
 
 from fastapi import HTTPException, Request
 
-from plugins.temperatures.temperatures import NODE, TemperatureService, load_temperature_sources
+from plugins.temperatures.temperatures import NODE, TemperatureService, parse_temperature_sources
 from plugins.temperatures.node_temperature_discovery import DiscoveryError, NodeTemperatureDiscovery
 
 
@@ -12,7 +12,8 @@ REQUEST_TIMEOUT_SECONDS = 14
 
 
 def register_temperature_routes(application, settings, authenticator, *, transport=None):
-    service = TemperatureService(load_temperature_sources(settings.temperature_sources_file), transport=transport)
+    sources = parse_temperature_sources(settings.temperature_sources if settings.temperature_sources is not None else {"nodes": {}})
+    service = TemperatureService(sources, transport=transport)
     discovery = NodeTemperatureDiscovery(authenticator)
 
     @application.get("/pve-plugins/api/temperatures/nodes/{node}")

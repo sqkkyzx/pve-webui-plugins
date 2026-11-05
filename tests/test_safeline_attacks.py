@@ -18,7 +18,6 @@ from test_site_routes import COOKIE, PVE, pve_transport
 def attacks(tmp_path, monkeypatch):
     for name in ("SAFELINE_URL", "SAFELINE_API_TOKEN", "SAFELINE_TLS_SERVER_NAME", "SAFELINE_CA_FILE"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("SAFELINE_STATE_FILE", str(tmp_path / "private/connection.sqlite3"))
     state = {"requests": [], "waf": [], "writes": [], "failure": None}
     state["groups"] = {i: {"id": i, "comment": "group-" + str(i), "ips": ["10.0.0.1"], "total": 1,
                             "builtin": i == 2, "reference": "https://sync.example/list" if i == 3 else ""} for i in range(1, 5)}
@@ -66,7 +65,7 @@ def attacks(tmp_path, monkeypatch):
             pytest.fail("Unexpected read: " + path)
         return httpx.Response(200, json={"data": copy.deepcopy(value), "err": "", "msg": "ok"})
 
-    app = create_app(Settings(PVE, enabled_plugins=("safeline",)), pve_auth_transport=pve_transport(state),
+    app = create_app(Settings(PVE, enabled_plugins=("safeline",), safeline_state_file=str(tmp_path / "private/connection.sqlite3")), pve_auth_transport=pve_transport(state),
                      plugin_transports={"safeline": httpx.MockTransport(handler)})
     with TestClient(app) as client:
         yield client, state

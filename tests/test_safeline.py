@@ -78,10 +78,9 @@ def integrated(tmp_path, monkeypatch):
     path = tmp_path / "private" / "connection.sqlite3"
     for name in ("SAFELINE_URL", "SAFELINE_API_TOKEN", "SAFELINE_TLS_SERVER_NAME", "SAFELINE_CA_FILE"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("SAFELINE_STATE_FILE", str(path))
     state = {"requests": [], "waf": []}
     transport = httpx.MockTransport(waf_handler(state))
-    app = create_app(Settings(PVE, enabled_plugins=("safeline",)), pve_auth_transport=pve_transport(state), plugin_transports={"safeline": transport})
+    app = create_app(Settings(PVE, enabled_plugins=("safeline",), safeline_state_file=str(path)), pve_auth_transport=pve_transport(state), plugin_transports={"safeline": transport})
     with TestClient(app) as client:
         yield client, state, path, app
 
@@ -133,12 +132,12 @@ def test_configuration_is_private_revisioned_and_survives_restart(integrated):
     assert changed.status_code == 422 and changed.json()["detail"] == "safeline_token_required"
 
 
-def test_clear_connection_does_not_reactivate_environment_credentials(integrated, monkeypatch):
+def test_removed_environment_credentials_are_ignored_before_and_after_clear(integrated, monkeypatch):
     client, state, _, _ = integrated
     monkeypatch.setenv("SAFELINE_URL", URL)
     monkeypatch.setenv("SAFELINE_API_TOKEN", TOKEN)
     response = client.get(BASE + "/connection", headers={"cookie": COOKIE})
-    assert response.json()["source"] == "environment" and TOKEN not in response.text
+    assert response.json()["source"] == "none" and response.json()["configured"] is False and TOKEN not in response.text
     headers = configure(client)
     deleted = client.request("DELETE", BASE + "/connection", json={"expected_revision": 1}, headers=headers)
     assert deleted.status_code == 200 and deleted.json()["configured"] is False

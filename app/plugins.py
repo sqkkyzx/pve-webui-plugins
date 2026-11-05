@@ -121,11 +121,11 @@ def discover_plugins(root: Path = PLUGINS_DIR) -> dict[str, Plugin]:
 
 def resolve_plugins(catalog: dict[str, Plugin], enabled: tuple[str, ...]) -> tuple[Plugin, ...]:
     if any(not isinstance(item, str) or IDENTIFIER.fullmatch(item) is None for item in enabled):
-        raise ValueError("PVE_PLUGINS must contain comma-separated plugin IDs")
+        raise ValueError("Plugin selection must contain valid plugin IDs")
     if len(set(enabled)) != len(enabled):
-        raise ValueError("PVE_PLUGINS contains duplicate IDs")
+        raise ValueError("Plugin selection contains duplicate IDs")
     if set(enabled) - set(catalog):
-        raise ValueError("PVE_PLUGINS contains unknown IDs")
+        raise ValueError("Plugin selection contains unknown IDs")
     visited, visiting, ordered = set(), set(), []
 
     def visit(plugin_id):
@@ -174,6 +174,10 @@ def render_runtime(plugins: tuple[Plugin, ...], *, output_dir: str | None = None
         for asset in plugin.assets:
             digest = hashlib.sha256(asset.path.read_bytes()).hexdigest()[:16]
             scripts.append(f'<script src="{html.escape(asset.url, quote=True)}?v={digest}"></script>')
+    for filename in ("navigation.js", "manager.js"):
+        source = ROOT / "app" / "static" / filename
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
+        scripts.append(f'<script src="/pve-plugins/assets/core/{filename}?v={digest}"></script>')
     head = Template((templates / "desktop-head.html.tmpl").read_text()).substitute(
         plugin_scripts="\n".join(scripts),
     ).encode()

@@ -139,12 +139,6 @@ class ConnectionStore:
                 if row:
                     return (Connection(row["url"], row["token"], bool(row["tls_verify"]), row["tls_server_name"], row["ca_pem"])
                             if row["url"] else None), row["revision"], "saved"
-                # Deployment credentials only seed an installation with no saved record.
-                url, token = os.environ.get("SAFELINE_URL"), os.environ.get("SAFELINE_API_TOKEN")
-                if url and token:
-                    ca = os.environ.get("SAFELINE_CA_FILE")
-                    return Connection(url, token, True, os.environ.get("SAFELINE_TLS_SERVER_NAME", ""),
-                                      Path(ca).read_text() if ca else ""), 0, "environment"
                 return None, 0, "none"
             except (OSError, sqlite3.Error, TypeError, ValueError):
                 raise SafeLineError("safeline_store_unavailable", 503) from None

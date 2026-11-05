@@ -243,3 +243,32 @@ def test_old_csrf_header_cannot_authorize_a_write(integrated):
     response = client.post(PATH,json={"name": "no", "url": URL},headers=headers)
     assert response.status_code == 403
     assert client.get(PATH,headers={"cookie": COOKIE}).json()['sites'] == []
+
+
+def test_full_metadata_partial_patch_and_explicit_reset(integrated):
+    client, _, _ = integrated
+    headers = credentials(client)
+    site = client.post(PATH, json={"name": "Name", "url": URL, "enabled": False, "alias": "  Site alias  ",
+                                  "icon": {"type": "pve", "value": "fa fa-server"}}, headers=headers).json()["site"]
+    assert site["enabled"] is False and site["alias"] == "Site alias"
+    changed = client.patch(PATH + "/" + site["id"], json={"expected_revision": 1, "enabled": True}, headers=headers)
+    assert changed.status_code == 200
+    assert changed.json()["site"] == {**site, "enabled": True, "revision": 2}
+    assert client.patch(PATH + "/" + site["id"], json={"expected_revision": 1, "alias": "stale"}, headers=headers).status_code == 409
+    cleared = client.patch(PATH + "/" + site["id"], json={"expected_revision": 2, "alias": "", "icon": None}, headers=headers).json()["site"]
+    assert cleared == {**site, "enabled": True, "alias": "", "icon": None, "revision": 3}
+    assert client.get(PATH, headers={"cookie": COOKIE}).json()["sites"] == [cleared]
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", "false"])
+def test_site_enabled_is_a_strict_json_boolean(integrated, value):
+    client, _, _ = integrated
+    response = client.post(PATH, json={"name": "Name", "url": URL, "enabled": value}, headers=credentials(client))
+    assert response.status_code == 422
+
+
+def test_disabled_sites_remain_in_administrator_listing(integrated):
+    client, _, _ = integrated
+    headers = credentials(client)
+    created = client.post(PATH, json={"name": "Disabled", "url": URL, "enabled": False}, headers=headers).json()["site"]
+    assert client.get(PATH, headers={"cookie": COOKIE}).json()["sites"] == [created]

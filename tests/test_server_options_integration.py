@@ -127,7 +127,7 @@ def integrated(tmp_path):
             pytest.fail("unexpected or non-allowlisted RPC")
         return httpx.Response(200, json=response, headers={"set-cookie": "private-cookie=must-not-replay; Path=/"})
 
-    settings = Settings(PVE, komodo_url=KOMODO, komodo_api_key=KEY, komodo_api_secret=SECRET,
+    settings = Settings(PVE, enabled_plugins=("komodo",), komodo_url=KOMODO, komodo_api_key=KEY, komodo_api_secret=SECRET,
                         action_state_file=str(actions_file), guest_links_file=str(links_file))
     application = create_app(settings, pve_auth_transport=httpx.MockTransport(pve),
                              komodo_transport=httpx.MockTransport(komodo))

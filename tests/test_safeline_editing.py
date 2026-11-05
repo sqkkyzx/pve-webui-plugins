@@ -83,9 +83,8 @@ def editing(tmp_path, monkeypatch):
     path = tmp_path / "private" / "connection.sqlite3"
     for name in ("SAFELINE_URL", "SAFELINE_API_TOKEN", "SAFELINE_TLS_SERVER_NAME", "SAFELINE_CA_FILE"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("SAFELINE_STATE_FILE", str(path))
     state, transport = waf_fixture()
-    app = create_app(Settings(PVE, enabled_plugins=("safeline",)), pve_auth_transport=pve_transport(state), plugin_transports={"safeline": transport})
+    app = create_app(Settings(PVE, enabled_plugins=("safeline",), safeline_state_file=str(path)), pve_auth_transport=pve_transport(state), plugin_transports={"safeline": transport})
     with TestClient(app) as client:
         yield client, state, path
 

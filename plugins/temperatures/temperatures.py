@@ -82,7 +82,7 @@ def _origin(value, allow_http):
 
 
 def load_temperature_sources(filename):
-    """Validate once at startup; never include configuration values in errors."""
+    """Parse a standalone sources file without including private values in errors."""
     if filename is None:
         return {}
     try:
@@ -94,6 +94,14 @@ def load_temperature_sources(filename):
         if len(encoded) > _MAX_BYTES:
             raise ValueError("configuration_too_large")
         data = _json(encoded)
+        return parse_temperature_sources(data, base_dir=path.parent)
+    except Exception:
+        raise ValueError("Invalid temperature sources configuration") from None
+
+
+def parse_temperature_sources(data, *, base_dir=Path.cwd()):
+    """Parse trusted inline sources saved by the plugin manager."""
+    try:
         if not isinstance(data, dict) or set(data) != {"nodes"} or not isinstance(data["nodes"], dict) or len(data["nodes"]) > 64:
             raise ValueError("invalid_configuration")
         sources = {}
@@ -120,7 +128,7 @@ def load_temperature_sources(filename):
                     raise ValueError("invalid_ca_file")
                 ca_path = Path(ca_file)
                 if not ca_path.is_absolute():
-                    ca_path = path.parent / ca_path
+                    ca_path = base_dir / ca_path
                 if not ca_path.is_file():
                     raise ValueError("invalid_ca_file")
                 ca_file = str(ca_path)
@@ -128,7 +136,7 @@ def load_temperature_sources(filename):
             sources[node] = TemperatureSource(origin, token, context, kind)
         return sources
     except Exception:
-        raise ValueError("Invalid PVE_TEMPERATURES_SOURCES_FILE configuration") from None
+        raise ValueError("Invalid temperature sources configuration") from None
 
 
 def _label(value):

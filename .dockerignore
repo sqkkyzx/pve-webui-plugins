@@ -1,6 +1,8 @@
 *
 !requirements.txt
 !requirements-debug.txt
+!LICENSE
+!NOTICE.md
 !app/
 !app/**
 !plugins/

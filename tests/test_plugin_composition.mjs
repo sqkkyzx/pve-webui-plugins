@@ -9,6 +9,8 @@ const plugins = [
     ['sites', '../plugins/sites/static/sites.js', '__pveExtraSitesLoaded', '_pveExtraSitesLoggedOut'],
     ['safeline', '../plugins/safeline/static/safeline.js', '__pveSafeLineLoaded', '_pveSafeLineLoggedOut'],
 ].map(([id, path, marker, logoutFlag]) => ({ id, source: readFileSync(new URL(path, import.meta.url), 'utf8'), marker, logoutFlag }));
+const manager = readFileSync(new URL('../app/static/manager.js', import.meta.url), 'utf8');
+const navigation = readFileSync(new URL('../app/static/navigation.js', import.meta.url), 'utf8');
 
 function browser() {
     const classes = new Map(), stack = [], warnings = [];
@@ -36,10 +38,15 @@ function browser() {
     define('PVE.form.ViewSelector', {
         initComponent() {
             const rows = ['server', 'folder', 'pool', 'tags'].map((key) => ({ key }));
-            this.store = { rows, findRecord(key, value) { return rows.find((row) => row[key] === value); }, add(row) { rows.push(row); } };
+            this.store = { rows, findRecord(key, value) { return rows.find((row) => row[key] === value); }, add(row) { rows.push(row); },
+                getCount() { return rows.length; }, each(fn) { rows.forEach((row, i) => fn({ get: (key) => row[key] }, i)); },
+                remove(records) { for (const record of records) rows.splice(rows.indexOf(record), 1); },
+                insert(index, records) { rows.splice(index, 0, ...records); } };
             return 'native-selector';
         },
         getStore() { return this.store; },
+        up() { return null; },
+        on() {},
     });
     define('PVE.tree.ResourceTree', { initComponent() {} });
     define('PVE.node.StatusView', { initComponent() {} });
@@ -55,22 +62,30 @@ function browser() {
     return { classes, context, warnings };
 }
 
-for (let mask = 0; mask < (1 << plugins.length); mask++) {
-    const selected = plugins.filter((_, index) => mask & (1 << index));
+const optionalPlugins = plugins.filter((plugin) => plugin.id !== 'sites');
+for (let mask = 0; mask < (1 << optionalPlugins.length); mask++) {
+    const selected = [...optionalPlugins.filter((_, index) => mask & (1 << index)), plugins.find((plugin) => plugin.id === 'sites')];
     test(`real plugin scripts compose selector and login hooks: ${selected.map((item) => item.id).join(',') || 'none'}`, () => {
         const ui = browser();
         for (const plugin of selected) vm.runInContext(plugin.source, ui.context);
+        vm.runInContext(navigation, ui.context);
+        vm.runInContext(manager, ui.context);
         // A reload must not wrap shared PVE hooks a second time.
         for (const plugin of selected) vm.runInContext(plugin.source, ui.context);
+        vm.runInContext(navigation, ui.context);
+        vm.runInContext(manager, ui.context);
         assert.equal(ui.warnings.length, 0);
+        assert.equal(ui.context.window.__pvePluginNavigationLoaded, true);
         for (const plugin of plugins) assert.equal(Boolean(ui.context.window[plugin.marker]), selected.includes(plugin));
         const selector = new (ui.classes.get('PVE.form.ViewSelector'))();
         assert.equal(selector.initComponent(), 'native-selector');
-        const expected = ['server', 'folder', 'pool', 'tags'];
+        const expected = ['server', 'folder', 'pool', 'tags', 'pve-plugin-manager'];
         if (selected.some((plugin) => plugin.id === 'komodo')) expected.push('pve-komodo-containers');
-        if (selected.some((plugin) => plugin.id === 'sites')) expected.push('pve-extra-sites');
         if (selected.some((plugin) => plugin.id === 'safeline')) expected.push('pve-safeline-waf');
         assert.deepEqual(selector.getStore().rows.map((row) => row.key), expected);
+        if (selected.some((plugin) => plugin.id === 'komodo')) {
+            assert.equal(selector.getStore().findRecord('key', 'pve-komodo-containers').value, 'Komodo');
+        }
         const workspace = new (ui.classes.get('PVE.StdWorkspace'))();
         assert.equal(workspace.onLogin({ username: 'root@pam' }), 'native-login');
         assert.equal(workspace.onLogin(null), 'native-logout');

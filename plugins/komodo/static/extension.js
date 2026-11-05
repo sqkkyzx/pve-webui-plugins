@@ -3267,7 +3267,7 @@
             typeof Workspace.prototype.onLogin !== 'function') return;
         Ext.define('PVEKomodo.override.ViewSelector', { override: 'PVE.form.ViewSelector', initComponent: function () {
             const result = this.callParent(arguments), store = this.getStore();
-            if (!store.findRecord('key', containerViewId, 0, false, true, true)) store.add({ key: containerViewId, value: '容器视图' });
+            if (!store.findRecord('key', containerViewId, 0, false, true, true)) store.add({ key: containerViewId, value: 'Komodo' });
             return result;
         } });
         Ext.define('PVEKomodo.override.ResourceTree', { override: 'PVE.tree.ResourceTree', initComponent: function () {

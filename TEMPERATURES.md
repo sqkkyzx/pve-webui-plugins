@@ -15,7 +15,7 @@
 
 PVE 的 `/cluster/status` 同时支持叢集与独立节点。节点 IP 由 PVE 提供，不使用浏览器地址栏域名，也不接受浏览器指定目标 IP、URL、端口或命令。IPv4 和 IPv6 均支持。离线、缺 IP、重复节点或冲突地址不会退回旧 IP，也不扫描其他网卡。
 
-浏览器始终访问 `/pve-plugins/api/temperatures/nodes/{node}/temperatures`。HTTPS 管理页面无需直接跨域连接 HTTP exporter，因此不需要为 node_exporter 开放 CORS。PVE Cookie 只发给 PVE；自动发现的 exporter 请求不携带 Cookie、PVE token 或 Komodo 凭据。
+浏览器始终访问 `/pve-plugins/api/temperatures/nodes/{node}`。HTTPS 管理页面无需直接跨域连接 HTTP exporter，因此不需要为 node_exporter 开放 CORS。PVE Cookie 只发给 PVE；自动发现的 exporter 请求不携带 Cookie、PVE token 或 Komodo 凭据。
 
 ## 安装与连通性
 
@@ -50,7 +50,7 @@ node_exporter 的 Linux `hwmon` collector 默认启用，读取 `/sys/class/hwmo
 
 ## 可选覆盖配置
 
-默认不需要配置。只有 exporter 使用其他地址、端口、TLS 或认证代理时，才使用 [`temperature-sources.example.json`](temperature-sources.example.json)：
+默认不需要配置。只有 exporter 使用其他地址、端口、TLS 或认证代理时，才在「--插件-- → 节点温度」编辑来源覆盖。结构可参考 [`temperature-sources.example.json`](temperature-sources.example.json)：
 
 ```json
 {
@@ -66,21 +66,18 @@ node_exporter 的 Linux `hwmon` collector 默认启用，读取 `/sys/class/hwmo
 
 `url` 只允许固定 HTTP(S) origin，不能包含路径、账号密码或查询参数。接口路径固定为 `/metrics`，仅筛选 `hwmon`。`ca_file` 可省略使用默认信任 CA；自签证书挂载公开 CA，保持 TLS 验证。明文 HTTP 非 loopback 地址需要显式 `"allow_http": true`，仅用于已有保护的传输网络。认证代理可额外配置 `token`（32–256 个 ASCII 字符），用于 Bearer 认证；原生 exporter 默认无需此 token。
 
-覆盖配置通过 `PVE_TEMPERATURES_SOURCES_FILE` 指定，并只读挂载到容器，例如：
+覆盖配置在管理页保存后生效，无需重建服务。来源 token 不回填原文，同一来源留空可沿用；删除节点条目即可恢复该节点的自动发现。
 
-```dotenv
-PVE_TEMPERATURES_SOURCES_FILE=/run/temperatures/sources.json
-```
+自签 CA 仍需把公开证书只读挂载到容器，并在 `ca_file` 使用容器内绝对路径，例如：
 
 ```yaml
 services:
   pve-webui-plugins:
     volumes:
-      - ./temperature-sources.json:/run/temperatures/sources.json:ro
       - ./collector-ca.pem:/run/temperatures/collector-ca.pem:ro
 ```
 
-文件应允许容器 UID/GID `10001:10001` 读取。含真实地址或 token 的配置不提交 Git。修改覆盖配置后重建服务。历史自定义采集器格式仍可显式使用 `"type": "collector"`，要求 token，读取固定 `/v1/temperatures`；它不参与默认自动发现。
+文件应允许容器 UID/GID `10001:10001` 读取。含真实地址或 token 的配置不提交 Git。可选自定义采集器使用 `"type": "collector"`，要求 token，读取固定 `/v1/temperatures`；它不参与默认自动发现。来源配置统一从管理页保存。
 
 ## 排错
 

@@ -26,9 +26,9 @@ Ext.onReady(function() { Ext.create('PVE.StdWorkspace');});
 </script></head><body></body></html>"""
 
 
-def client_for(handler, *, enabled=True):
+def client_for(handler, *, enabled=True, plugins=("sites",)):
     return TestClient(create_app(
-        Settings("https://pve.example:8006", injection_enabled=enabled),
+        Settings("https://pve.example:8006", injection_enabled=enabled, enabled_plugins=plugins),
         transport=httpx.MockTransport(handler),
     ))
 
@@ -45,7 +45,7 @@ def test_inject_after_dependencies_before_workspace_and_preserve_session():
         assert "if-none-match" not in request.headers
         return html_response()
 
-    response = client_for(upstream).get(
+    response = client_for(upstream, plugins=("komodo", "temperatures", "sites")).get(
         "/?lang=zh_CN&theme=auto",
         headers={"cookie": "PVEAuthCookie=alice-ticket; PVELangCookie=zh_CN", "if-none-match": "old"},
     )
@@ -122,7 +122,7 @@ def test_decode_upstream_compression_remove_stale_validators_and_hop_headers():
         "last-modified": "yesterday", "connection": "keep-alive, x-internal",
         "x-internal": "private", "x-frame-options": "SAMEORIGIN",
     })).get("/")
-    assert EXTENSION_PATH in response.text
+    assert SITE_EXTENSION_PATH in response.text
     for name in ("content-encoding", "etag", "last-modified", "connection", "x-internal"):
         assert name not in response.headers
     assert response.headers["x-frame-options"] == "SAMEORIGIN"
@@ -164,11 +164,9 @@ def test_no_generic_api_or_open_proxy_and_health_does_not_contact_pve():
 
     client = client_for(unexpected)
     assert client.get("/pve-plugins/health").json()["status"] == "ok"
-    assert client.get(EXTENSION_PATH).status_code == 200
-    assert "Docker" in client.get(EXTENSION_PATH).text
-    assert client.get(TEMPERATURE_EXTENSION_PATH).status_code == 200
-    assert client.get(TEMPERATURE_EXTENSION_PATH).headers["x-content-type-options"] == "nosniff"
-    assert "StatusView" in client.get(TEMPERATURE_EXTENSION_PATH).text
+    assert client.get("/pve-plugins/health").json()["plugins"] == ["sites"]
+    assert client.get(EXTENSION_PATH).status_code == 404
+    assert client.get(TEMPERATURE_EXTENSION_PATH).status_code == 404
     assert client.get(SITE_EXTENSION_PATH).status_code == 200
     assert client.head(SITE_EXTENSION_PATH).headers["x-content-type-options"] == "nosniff"
     assert "ViewSelector" in client.get(SITE_EXTENSION_PATH).text
@@ -187,19 +185,20 @@ def test_upstream_is_fixed_https_origin(value):
 
 
 def test_temperature_route_is_registered_without_komodo_configuration():
-    client = client_for(lambda request: pytest.fail("anonymous request must not reach PVE"))
+    client = client_for(lambda request: pytest.fail("anonymous request must not reach PVE"), plugins=("temperatures",))
     response = client.get("/pve-plugins/api/temperatures/nodes/pve-a")
     assert response.status_code == 401
     assert response.headers["cache-control"] == "private, no-store"
 
 
-def test_temperature_source_path_from_environment(monkeypatch):
-    monkeypatch.setenv("PVE_UPSTREAM", "https://pve.example:8006")
+def test_temperature_sources_are_not_bootstrapped_from_environment(monkeypatch):
+    monkeypatch.setenv("PVE_UPSTREAM", "192.0.2.10")
     monkeypatch.setenv("PVE_TEMPERATURES_SOURCES_FILE", "/run/temperatures/sources.json")
-    assert Settings.from_env().temperature_sources_file == "/run/temperatures/sources.json"
+    assert Settings.from_env().temperature_sources_file is None
+    assert Settings.from_env().temperature_sources is None
 
 
-def test_real_collector_contract_reaches_the_main_app_without_komodo(tmp_path):
+def test_real_collector_contract_reaches_the_main_app_without_komodo():
     import json
     import threading
     from urllib.parse import quote
@@ -219,10 +218,9 @@ def test_real_collector_contract_reaches_the_main_app_without_komodo(tmp_path):
     server = collector.TemperatureHTTPServer(("127.0.0.1", 0), sampler, token.encode())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    sources = tmp_path / "sources.json"
-    sources.write_text(json.dumps({"nodes": {"pve-a": {
+    sources = {"nodes": {"pve-a": {
         "url": f"http://127.0.0.1:{server.server_port}", "token": token,
-    }}}))
+    }}}
 
     def pve_auth(request):
         assert "authorization" not in request.headers
@@ -233,7 +231,7 @@ def test_real_collector_contract_reaches_the_main_app_without_komodo(tmp_path):
 
     try:
         application = create_app(
-            Settings("https://pve.example:8006", temperature_sources_file=str(sources)),
+            Settings("https://pve.example:8006", enabled_plugins=("temperatures",), temperature_sources=sources),
             pve_auth_transport=httpx.MockTransport(pve_auth),
         )
         with TestClient(application) as browser:

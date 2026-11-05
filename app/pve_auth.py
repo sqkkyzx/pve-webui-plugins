@@ -12,6 +12,8 @@ from urllib.parse import unquote, urlsplit
 from fastapi import HTTPException, Request
 import httpx
 
+from app.pve_upstream import VERIFY_TICKET_EXTENSION
+
 
 _USER = re.compile(r"[^\s:/]+@[A-Za-z][A-Za-z0-9._-]+\Z")
 _TICKET = re.compile(r"PVE:([^:\s/]+):[0-9A-Fa-f]{8,16}::[A-Za-z0-9+/=_-]+\Z")
@@ -103,6 +105,7 @@ class PveAuthenticator:
                         "path": "/",
                         "privs": "Sys.Audit",
                     },
+                    extensions={VERIFY_TICKET_EXTENSION: True},
                 )
                 data = self._data(identity)
         except httpx.HTTPError:

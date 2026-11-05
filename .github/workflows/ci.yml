@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       bundle_debug_image:
-        description: Export the verified debug image for deployment
+        description: Export verified runtime and debug images for deployment
         type: boolean
         required: false
         default: false
@@ -35,8 +35,10 @@ jobs:
         run: python -m pytest -q
       - name: Frontend regression
         run: node --test tests/*.mjs
-      - name: Check plugin scripts
+      - name: Check core and plugin scripts
         run: |
+          node --check app/static/navigation.js
+          node --check app/static/manager.js
           node --check plugins/komodo/static/extension.js
           node --check plugins/temperatures/static/temperatures.js
           node --check plugins/sites/static/sites.js
@@ -51,38 +53,59 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Validate Compose preserves an explicitly empty selection
+      - name: Validate Compose infrastructure configuration
         env:
-          PVE_UPSTREAM: https://pve.invalid:8006
-          PVE_PLUGINS: ''
+          PVE_UPSTREAM: 192.0.2.2,192.0.2.3,192.0.2.4
         run: |
           docker compose config --format json > "$RUNNER_TEMP/compose.json"
           python3 - <<'PY'
           import json, os
           from pathlib import Path
           config = json.loads(Path(os.environ['RUNNER_TEMP'], 'compose.json').read_text())
-          assert config['services']['pve-webui-plugins']['environment']['PVE_PLUGINS'] == ''
+          service = config['services']['pve-webui-plugins']
+          assert set(service['environment']) == {
+              'PVE_UPSTREAM', 'PVE_PLUGINS_INJECTION_ENABLED', 'PVE_TLS_VERIFY',
+              'PVE_CA_FILE', 'PVE_TLS_SERVER_NAMES', 'PVE_ADMIN_USERS',
+              'PVE_INTERNAL_PROXY_ENABLED', 'PVE_TRUSTED_PROXIES',
+              'PVE_PROXY_CERT_FILE', 'PVE_PROXY_KEY_FILE',
+          }
+          assert service['environment']['PVE_TLS_VERIFY'] == 'false'
+          assert service['environment']['PVE_INTERNAL_PROXY_ENABLED'] == 'true'
+          assert service['read_only'] is True
+          assert any(volume['target'] == '/app/data' and volume['type'] == 'volume'
+                     and not volume.get('read_only', False)
+                     for volume in service['volumes'])
+          assert any(port['target'] == 8006 and str(port['published']) == '8006'
+                     and port['host_ip'] == '0.0.0.0' for port in service['ports'])
+          assert any(port['target'] == 8008 and str(port['published']) == '8008'
+                     and port['host_ip'] == '127.0.0.1' for port in service['ports'])
           PY
       - name: Build amd64 image
         run: docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$GITHUB_SHA" -t pve-webui-plugins:ci .
-      - name: Verify all sixteen combinations in non-root read-only containers
+      - name: Verify fresh defaults and eight optional combinations in non-root read-only containers
         run: python3 scripts/smoke_image.py pve-webui-plugins:ci
+      - name: Verify HTTPS gateway, app-only mode, WebSocket, strict TLS and multi-node failover
+        run: python3 scripts/smoke_proxy.py pve-webui-plugins:ci
       - name: Build debug image
         run: docker build --platform linux/amd64 --target debug --build-arg SOURCE_REVISION="$GITHUB_SHA" -t pve-webui-plugins:debug-ci .
       - name: Verify source mounts and reload of Python, JavaScript, JSON and templates
         run: python3 scripts/smoke_debug.py pve-webui-plugins:debug-ci
-      - name: Export verified debug image
+      - name: Export verified deployment images
         if: github.event_name == 'workflow_dispatch' && inputs.bundle_debug_image
         run: |
+          docker image save pve-webui-plugins:ci | gzip -1 > "$RUNNER_TEMP/pve-webui-plugins-runtime-linux-amd64.tar.gz"
           docker image save pve-webui-plugins:debug-ci | gzip -1 > "$RUNNER_TEMP/pve-webui-plugins-debug-linux-amd64.tar.gz"
           cd "$RUNNER_TEMP"
+          sha256sum pve-webui-plugins-runtime-linux-amd64.tar.gz > pve-webui-plugins-runtime-linux-amd64.tar.gz.sha256
           sha256sum pve-webui-plugins-debug-linux-amd64.tar.gz > pve-webui-plugins-debug-linux-amd64.tar.gz.sha256
       - name: Save deployment bundle for one day
         if: github.event_name == 'workflow_dispatch' && inputs.bundle_debug_image
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: pve-webui-plugins-debug-linux-amd64-${{ github.sha }}
+          name: pve-webui-plugins-images-linux-amd64-${{ github.sha }}
           path: |
+            ${{ runner.temp }}/pve-webui-plugins-runtime-linux-amd64.tar.gz
+            ${{ runner.temp }}/pve-webui-plugins-runtime-linux-amd64.tar.gz.sha256
             ${{ runner.temp }}/pve-webui-plugins-debug-linux-amd64.tar.gz
             ${{ runner.temp }}/pve-webui-plugins-debug-linux-amd64.tar.gz.sha256
           compression-level: 0

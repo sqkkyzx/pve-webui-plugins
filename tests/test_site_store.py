@@ -33,7 +33,7 @@ def test_lazy_persistent_crud_retains_order_identity_and_revisions(tmp_path):
     first = sites.create("  監控  ", "  " + URL + "  ")
     second = sites.create("控制台", "http://192.168.1.10:8000/")
     assert uuid.UUID(hex=first["id"]).version == 4 and len(first["id"]) == 32
-    assert first == {"id": first["id"], "name": "監控", "url": URL, "revision": 1}
+    assert first == {"id": first["id"], "name": "監控", "url": URL, "revision": 1, "enabled": True, "alias": "", "icon": None}
     updated = sites.update(first["id"], "監控二", URL + "-two", expected_revision=1)
     assert updated["id"] == first["id"] and updated["revision"] == 2
     assert sites.list() == [updated, second]
@@ -202,3 +202,74 @@ def test_unavailable_or_corrupt_database_never_leaks_private_path(tmp_path):
 def test_database_namespace_requires_fixed_https_pve_origin(origin):
     with pytest.raises(ValueError, match="^Sites require a fixed PVE HTTPS origin$"):
         store(origin=origin)
+
+
+def database_without_display_fields(path):
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE site_metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+        connection.execute("INSERT INTO site_metadata VALUES ('pve_origin',?)", (PVE,))
+        connection.execute("CREATE TABLE sites (id TEXT PRIMARY KEY,name TEXT NOT NULL,url TEXT NOT NULL,revision INTEGER NOT NULL)")
+        connection.execute("INSERT INTO sites VALUES (?,?,?,?)", ("a" * 32, "Existing", URL, 17))
+
+
+def test_unsupported_site_schema_is_rejected_without_rewriting(tmp_path):
+    path = tmp_path / "unsupported.sqlite3"
+    database_without_display_fields(path)
+    original = path.read_bytes()
+    sites = store(path)
+    fails("unsupported_site_schema", sites.list)
+    assert sites._connection is None
+    assert path.read_bytes() == original
+    with sqlite3.connect(path) as db:
+        assert [row[1] for row in db.execute("PRAGMA table_info(sites)")] == ["id", "name", "url", "revision"]
+        assert db.execute("SELECT rowid,revision FROM sites").fetchall() == [(1, 17)]
+        assert db.execute("SELECT value FROM site_metadata WHERE key='pve_origin'").fetchone()[0] == PVE
+
+
+def test_fresh_site_schema_includes_all_display_fields(tmp_path):
+    path = tmp_path / "sites.sqlite3"
+    sites = store(path)
+    created = sites.create("😀" * 100, URL, alias="Dashboard", enabled=False,
+                           icon={"type": "pve", "value": "fa fa-server"})
+    sites.close()
+    with sqlite3.connect(path) as db:
+        assert [row[1] for row in db.execute("PRAGMA table_info(sites)")] == ["id", "name", "url", "revision", "enabled", "alias", "icon"]
+    assert store(path).list() == [created]
+    fails("pve_instance_mismatch", store(path, "https://other.example").list)
+
+
+def test_metadata_updates_preserve_omitted_values_and_share_revision_cas():
+    sites = store()
+    icon = {"type": "pve", "value": "fl fl-docker"}
+    original = sites.create("Name", URL, alias="  Alias  ", icon=icon)
+    changed = sites.update(original["id"], enabled=False, expected_revision=1)
+    assert changed == {**original, "enabled": False, "revision": 2}
+    assert changed["alias"] == "Alias" and changed["icon"] == icon
+    fails("site_revision_conflict", lambda: sites.update(original["id"], alias="stale", expected_revision=1), 409)
+    cleared = sites.update(original["id"], alias="", icon=None, expected_revision=2)
+    assert cleared == {**changed, "alias": "", "icon": None, "revision": 3}
+    assert sites.list() == [cleared]
+
+
+@pytest.mark.parametrize("field,value,code", [
+    ("enabled", 1, "invalid_site_enabled"), ("enabled", "false", "invalid_site_enabled"),
+    ("enabled", None, "invalid_site_enabled"), ("alias", None, "invalid_site_alias"),
+    ("alias", "x" * 101, "invalid_site_alias"), ("alias", "bad\nname", "invalid_site_alias"),
+    ("alias", "bad\x80", "invalid_site_alias"), ("icon", {}, "invalid_site_icon"),
+    ("icon", {"type": "pve", "value": "fa fa-server onclick=x"}, "invalid_site_icon"),
+    ("icon", {"type": "url", "value": "javascript:alert(1)"}, "invalid_site_icon"),
+    ("icon", {"type": "url", "value": "https://user:secret@example.com/icon"}, "invalid_site_icon"),
+])
+def test_invalid_metadata_never_initializes_storage(tmp_path, field, value, code):
+    path = tmp_path / "sites.sqlite3"
+    fails(code, lambda: store(path).create("Name", URL, **{field: value}), 422)
+    assert not path.exists()
+
+
+def test_unicode_alias_limit_counts_characters_and_manual_icons_persist(tmp_path):
+    sites = store(tmp_path / "sites.sqlite3")
+    site = sites.create("Name", URL, enabled=False, alias="  " + "😀" * 100 + "  ",
+                        icon={"type": "url", "value": "https://cdn.example/site.svg?x=1&y=2"})
+    assert site["enabled"] is False and len(site["alias"]) == 100
+    sites.close()
+    assert store(tmp_path / "sites.sqlite3").list() == [site]

@@ -16,7 +16,6 @@ from test_site_routes import COOKIE, PVE, pve_transport
 def dashboard_app(tmp_path, monkeypatch):
     for key in ("SAFELINE_URL", "SAFELINE_API_TOKEN", "SAFELINE_TLS_SERVER_NAME", "SAFELINE_CA_FILE"):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("SAFELINE_STATE_FILE", str(tmp_path / "safeline" / "connection.sqlite3"))
     monkeypatch.setattr(dashboard, "time", SimpleNamespace(time=lambda: 1792324800))
     state = {"requests": [], "waf": [], "edition": {"version": 2, "effective_edition": 2}, "failure": None}
     base = waf_handler(state)
@@ -48,7 +47,7 @@ def dashboard_app(tmp_path, monkeypatch):
                 "event": {"ip": "10.0.0.1", "port": "443", "host": "app.example", "start": 1792300000, "end": 1792300300, "password": "never-forward-this"}}]}
         return httpx.Response(200, json={"data": value, "err": "", "msg": "ok"})
 
-    app = create_app(Settings(PVE, enabled_plugins=("safeline",)), pve_auth_transport=pve_transport(state), plugin_transports={"safeline": httpx.MockTransport(handler)})
+    app = create_app(Settings(PVE, enabled_plugins=("safeline",), safeline_state_file=str(tmp_path / "safeline" / "connection.sqlite3")), pve_auth_transport=pve_transport(state), plugin_transports={"safeline": httpx.MockTransport(handler)})
     with TestClient(app) as client:
         yield client, state
 

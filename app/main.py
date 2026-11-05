@@ -1,22 +1,28 @@
 """Non-invasive PVE desktop host with independently selected WebUI plugins."""
 
 from contextlib import asynccontextmanager
+import asyncio
+from copy import deepcopy
+from pathlib import Path
 import logging
 import re
 from urllib.parse import parse_qs
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 import httpx
 
 from app.csrf import CsrfProtector
-from app.plugins import PluginContext, discover_plugins, load_plugin, render_runtime, resolve_plugins
+from app.plugins import discover_plugins, render_runtime, resolve_plugins
+from app.configuration import ConfigurationStore, MAX_CONFIG_BYTES, decode
+from app.plugin_runtime import GenerationBuildError, PluginGateway, build_generation
 from app.pve_auth import PveAuthenticator
+from app.pve_upstream import PveFailoverTransport, PveUpstreamState
 from app.settings import Settings
 
 
 LOGGER = logging.getLogger("pve_webui_plugins")
-VERSION = "0.13.1"
+VERSION = "0.14.0"
 
 
 # Reject unknown desktop shapes instead of injecting into login providers,
@@ -64,37 +70,64 @@ def create_app(
     config = settings or Settings.from_env()
     tls = config.tls_context()
     catalog = discover_plugins()
-    selected = resolve_plugins(catalog, config.enabled_plugins)
-    runtime = render_runtime(selected, output_dir=config.runtime_dir)
+    store = ConfigurationStore(config, catalog)
+    upstream_state = PveUpstreamState(config.upstreams)
+    desktop_transport = PveFailoverTransport(upstream_state, verify=tls,
+        server_names=config.upstream_server_names, transport=transport)
+    auth_transport = desktop_transport if transport is pve_auth_transport else PveFailoverTransport(
+        upstream_state, verify=tls, server_names=config.upstream_server_names, transport=pve_auth_transport)
     authenticator = PveAuthenticator(
-        config.upstream, verify=tls, allowed_users=config.admin_users, transport=pve_auth_transport,
+        config.upstream, verify=tls, allowed_users=config.admin_users, transport=auth_transport,
     )
-    handles = {}
+    csrf = CsrfProtector()
+    transports = {**(plugin_transports or {}), "pve_auth": auth_transport, "komodo": komodo_transport,
+                  "temperature": temperature_transport}
+    try:
+        generation = build_generation(store.effective_settings(), catalog, authenticator, csrf, transports)
+    except GenerationBuildError as error:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(error.generation.close())
+        else:
+            loop.create_task(error.generation.close())
+        raise ValueError("Plugin initialization failed") from None
+    gateway = PluginGateway(generation)
+    if config.runtime_dir:
+        render_runtime(generation.runtime.plugins, output_dir=config.runtime_dir)
+    update_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(application):
         try:
             yield
         finally:
-            errors = []
-            for plugin_id, handle in reversed(tuple(handles.items())):
-                if handle.shutdown is not None:
-                    try:
-                        await handle.shutdown()
-                    except Exception as error:
-                        LOGGER.error("Plugin shutdown failed: %s", plugin_id)
-                        errors.append(error)
-            if errors:
-                raise ExceptionGroup("Plugin shutdown failed", errors)
+            try:
+                await gateway.close()
+            finally:
+                try:
+                    await desktop_transport.close_pool()
+                finally:
+                    if auth_transport is not desktop_transport:
+                        await auth_transport.close_pool()
 
     application = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
-    context = PluginContext(application, config, authenticator, CsrfProtector(),
-                            {**(plugin_transports or {}), "pve_auth": pve_auth_transport, "komodo": komodo_transport,
-                             "temperature": temperature_transport})
-    for plugin in selected:
-        handles[plugin.id] = load_plugin(plugin, context)
-    application.state.plugin_runtime = runtime
-    application.state.plugin_handles = handles
+
+    published_keys = set()
+
+    def publish_state(generation):
+        application.state.plugin_runtime = generation.runtime
+        application.state.plugin_handles = generation.handles
+        # Keep plugin diagnostic state accessible to local integrations/tests.
+        for key in published_keys:
+            if hasattr(application.state, key):
+                delattr(application.state, key)
+        published_keys.clear()
+        for key, value in generation.application.state._state.items():
+            setattr(application.state, key, value)
+            published_keys.add(key)
+
+    publish_state(generation)
 
     @application.middleware("http")
     async def private_api_responses(request: Request, call_next):
@@ -112,23 +145,94 @@ def create_app(
     @application.get("/pve-plugins/api/plugins")
     async def plugins(request: Request) -> dict:
         await authenticator.authenticate(request)
-        return {**runtime.manifest, "available": [plugin.public() for plugin in catalog.values()]}
+        return {**gateway.generation.runtime.manifest, "available": [plugin.public() for plugin in catalog.values()]}
 
     @application.get("/pve-plugins/health")
     async def health() -> JSONResponse:
         return JSONResponse({"status": "ok", "version": VERSION,
                              "injection_enabled": config.injection_enabled,
-                             "plugins": runtime.manifest["enabled"]})
+                             "plugins": gateway.generation.runtime.manifest["enabled"]})
 
-    def asset_endpoint(asset):
-        async def serve() -> FileResponse:
-            return FileResponse(asset.path, media_type="text/javascript; charset=utf-8",
-                                headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
-        return serve
+    def configuration_response(request, user):
+        return {**store.public(), "available": [plugin.public() for plugin in catalog.values()],
+                "csrf_token": csrf.issue(request, user)}
 
-    for plugin in selected:
-        for asset in plugin.assets:
-            application.add_api_route(asset.url, asset_endpoint(asset), methods=["GET", "HEAD"])
+    @application.get("/pve-plugins/api/config")
+    async def get_configuration(request: Request):
+        user = await authenticator.authenticate(request)
+        if request.query_params:
+            raise HTTPException(422, "invalid_plugin_configuration_query")
+        return configuration_response(request, user)
+
+    @application.get("/pve-plugins/api/navigation")
+    async def get_navigation(request: Request):
+        await authenticator.authenticate(request)
+        if request.query_params:
+            raise HTTPException(422, "invalid_plugin_navigation_query")
+        return {"revision": store.value["revision"], "navigation": deepcopy(store.value["navigation"])}
+
+    @application.put("/pve-plugins/api/config")
+    async def put_configuration(request: Request):
+        user = await authenticator.authenticate(request)
+        headers = request.headers.getlist("x-pve-plugins-csrf")
+        csrf.verify(request, user, headers[0] if len(headers) == 1 else "")
+        if request.query_params:
+            raise HTTPException(422, "invalid_plugin_configuration_query")
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            raise HTTPException(415, "json_required")
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_CONFIG_BYTES:
+                raise HTTPException(413, "plugin_configuration_too_large")
+            body.extend(chunk)
+        try:
+            command = decode(bytes(body))
+        except (ValueError, UnicodeError, RecursionError):
+            raise HTTPException(422, "invalid_plugin_configuration") from None
+        async with update_lock:
+            value = store.prepare(command)
+            try:
+                selected = resolve_plugins(catalog, tuple(value["enabled_plugins"]))
+            except ValueError:
+                raise HTTPException(422, "invalid_plugin_configuration") from None
+            if (selected == gateway.generation.runtime.plugins
+                    and value["modules"] == store.value["modules"]):
+                # Navigation preferences do not replace clients or interrupt
+                # accepted requests and open terminal sessions.
+                store.save(value)
+                return {**configuration_response(request, user), "reload_required": False}
+            try:
+                candidate = build_generation(store.effective_settings(value), catalog, authenticator, csrf, transports)
+            except GenerationBuildError as error:
+                await error.generation.close()
+                raise HTTPException(422, "invalid_plugin_configuration") from None
+            except (ValueError, OSError):
+                raise HTTPException(422, "invalid_plugin_configuration") from None
+            try:
+                store.save(value)
+            except Exception:
+                await candidate.close()
+                raise
+            gateway.replace(candidate)
+            publish_state(candidate)
+            if config.runtime_dir:
+                try:
+                    render_runtime(candidate.runtime.plugins, output_dir=config.runtime_dir)
+                except OSError:
+                    LOGGER.warning("Generated plugin metadata could not be written")
+            return {**configuration_response(request, user), "reload_required": True}
+
+    @application.api_route("/pve-plugins/assets/core/manager.js", methods=["GET", "HEAD"])
+    async def manager_asset():
+        return FileResponse(Path(__file__).parent / "static" / "manager.js",
+                            media_type="text/javascript; charset=utf-8",
+                            headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+    @application.api_route("/pve-plugins/assets/core/navigation.js", methods=["GET", "HEAD"])
+    async def navigation_asset():
+        return FileResponse(Path(__file__).parent / "static" / "navigation.js",
+                            media_type="text/javascript; charset=utf-8",
+                            headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
     @application.api_route("/", methods=["GET", "HEAD"])
     async def desktop(request: Request) -> Response:
@@ -149,7 +253,7 @@ def create_app(
                 timeout=httpx.Timeout(20.0, connect=5.0),
                 follow_redirects=False,
                 trust_env=False,
-                transport=transport,
+                transport=desktop_transport,
             ) as client:
                 upstream = await client.get(upstream_url, headers=headers)
         except httpx.HTTPError:
@@ -165,7 +269,7 @@ def create_app(
         body = upstream.content
         state = "upstream-response"
         if upstream.status_code == 200 and upstream.headers.get("content-type", "").split(";", 1)[0].strip().lower() == "text/html":
-            body, state = inject_extension(body, query, config.injection_enabled and bool(runtime.plugins), runtime.head)
+            body, state = inject_extension(body, query, config.injection_enabled, gateway.generation.runtime.head)
 
         # HTTPX has decoded Content-Encoding. Remove body validators as well as
         # hop-by-hop headers, and preserve duplicate Set-Cookie headers.
@@ -188,4 +292,5 @@ def create_app(
         response.headers["X-PVE-Plugins-Extension"] = state
         return response
 
+    application.router.routes.append(gateway)
     return application

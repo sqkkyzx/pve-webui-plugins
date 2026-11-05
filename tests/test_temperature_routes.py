@@ -74,7 +74,7 @@ node_scrape_collector_success{collector="hwmon"} 1
     def make(configured=True):
         app = FastAPI()
         auth = PveAuthenticator(PVE, transport=httpx.MockTransport(pve))
-        register_temperature_routes(app, SimpleNamespace(temperature_sources_file=str(path) if configured else None), auth,
+        register_temperature_routes(app, SimpleNamespace(temperature_sources=json.loads(path.read_text()) if configured else None), auth,
                                     transport=httpx.MockTransport(collector))
         return TestClient(app)
     state["make"] = make

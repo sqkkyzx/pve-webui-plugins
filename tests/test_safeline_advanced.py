@@ -49,8 +49,7 @@ def advanced(tmp_path, monkeypatch):
         return httpx.Response(200, json={"data": value, "err": ""})
 
     db = tmp_path / "advanced.sqlite3"
-    monkeypatch.setenv("SAFELINE_STATE_FILE", str(db))
-    app = create_app(Settings(PVE, enabled_plugins=("safeline",)), pve_auth_transport=pve_transport(state), plugin_transports={"safeline": httpx.MockTransport(handler)})
+    app = create_app(Settings(PVE, enabled_plugins=("safeline",), safeline_state_file=str(db)), pve_auth_transport=pve_transport(state), plugin_transports={"safeline": httpx.MockTransport(handler)})
     with TestClient(app) as client:
         yield client, state, db
 
